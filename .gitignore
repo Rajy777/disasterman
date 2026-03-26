@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Project-specific logs and temp files
+*.txt
+*.log
+debug_out.txt
+real_debug.txt
+task3_out.txt
+inference_out.txt
+inference_out_utf8.txt
+exc.txt
+read_debug_2.py
+catch_debug.py
+debug_out_u8.txt
+read_debug.py
+tests.py
+test_err.py
+inference_out.txt
