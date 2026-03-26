@@ -279,9 +279,9 @@ TASK_3 = {
         {"zone_id": "E", "casualties_total": 40, "casualties_critical": 8, "critical_deadline": 10, "supply_needed": 100, "road_blocked": True, "severity_init": 0.75, "is_false_sos": False},
         {"zone_id": "F", "casualties_total": 35, "casualties_critical": 7, "critical_deadline": 9, "supply_needed": 90, "road_blocked": False, "severity_init": 0.65, "is_false_sos": False},
         {"zone_id": "G", "casualties_total": 45, "casualties_critical": 9, "critical_deadline": 11, "supply_needed": 110, "road_blocked": True, "severity_init": 0.85, "is_false_sos": False},
-        {"zone_id": "H", "casualties_total": 0, "casualties_critical": 0, "critical_deadline": 99, "supply_needed": 0, "road_blocked": False, "severity_init": 0.0, "is_false_sos": True},
-        {"zone_id": "I", "casualties_total": 0, "casualties_critical": 0, "critical_deadline": 99, "supply_needed": 0, "road_blocked": False, "severity_init": 0.0, "is_false_sos": True},
-        {"zone_id": "J", "casualties_total": 0, "casualties_critical": 0, "critical_deadline": 99, "supply_needed": 0, "road_blocked": False, "severity_init": 0.0, "is_false_sos": True},
+        {"zone_id": "H", "casualties_total": 0, "casualties_critical": 0, "critical_deadline": 99, "supply_needed": 0, "road_blocked": False, "severity_init": 0.80, "is_false_sos": True},
+        {"zone_id": "I", "casualties_total": 0, "casualties_critical": 0, "critical_deadline": 99, "supply_needed": 0, "road_blocked": False, "severity_init": 0.85, "is_false_sos": True},
+        {"zone_id": "J", "casualties_total": 0, "casualties_critical": 0, "critical_deadline": 99, "supply_needed": 0, "road_blocked": False, "severity_init": 0.90, "is_false_sos": True},
     ]
 }
 

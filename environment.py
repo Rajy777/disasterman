@@ -324,7 +324,7 @@ class DisasterEnv:
         # --- Severity recalculation ---
         for zone in self._zones:
             if zone.is_false_sos:
-                zone.severity = 0.0
+                # Keep original high severity to trick the agent
                 continue
             if zone.completed:
                 zone.severity = 0.0
