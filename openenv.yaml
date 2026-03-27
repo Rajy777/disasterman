@@ -1,0 +1,214 @@
+name: disaster-relief-coordination-env
+version: "1.0.0"
+description: >
+  Multi-zone disaster relief coordination environment for AI agent training.
+  An agent acts as an emergency coordinator — deploying rescue teams, routing
+  supply trucks, and making airlift decisions under time pressure, resource
+  constraints, and deliberately misleading false SOS signals.
+
+authors:
+  - Raj Yadav
+  - Tushar Sharma
+  - Krish Potanwar
+
+team: Agentic Apocalypse
+hackathon: OpenEnv Round 1
+
+# ---------------------------------------------------------------------------
+# API endpoints (OpenEnv spec)
+# ---------------------------------------------------------------------------
+api:
+  reset:
+    method: POST
+    path: /reset
+    description: Initialize a new episode. Returns session_id + first observation.
+    request:
+      task_id:
+        type: string
+        enum: [task_1, task_2, task_3]
+        default: task_1
+    response: ObservationModel
+
+  step:
+    method: POST
+    path: /step
+    description: Submit one action. Returns (observation, reward, done, info).
+    request:
+      session_id:
+        type: string
+      action:
+        type: ActionModel
+    response: StepResult
+
+  state:
+    method: GET
+    path: /state/{session_id}
+    description: >
+      Full internal world state including hidden fields (casualties_critical,
+      is_false_sos). Used by graders. Not shown to the agent during inference.
+
+  tasks:
+    method: GET
+    path: /tasks
+    description: List all tasks with their configurations and action schema.
+
+  grader:
+    method: POST
+    path: /grader
+    description: Score a completed episode. Returns float in [0.0, 1.0].
+    request:
+      event_log: list[dict]
+      final_state: dict
+      task_id: string
+
+  baseline:
+    method: POST
+    path: /baseline
+    description: >
+      Run the baseline agent (Llama 3 via Groq) on all 3 tasks.
+      Requires GROQ_API_KEY environment variable.
+
+# ---------------------------------------------------------------------------
+# Observation space
+# ---------------------------------------------------------------------------
+observation_space:
+  zones:
+    type: list[ZoneObs]
+    fields:
+      zone_id: string
+      casualties_remaining: int
+      supply_gap: int
+      severity:
+        type: float
+        range: [0.0, 1.0]
+        note: >
+          Computed from casualties_remaining, critical factor, and time pressure.
+          Hides casualties_critical — agent must infer urgency.
+      road_blocked: bool
+      teams_present: int
+      sos_active:
+        type: bool
+        note: True for both real AND false SOS zones — agent cannot distinguish directly.
+  resources:
+    teams_available: int
+    supply_stock: int
+    airlifts_remaining: int
+    teams_in_transit: dict[str, int]
+  step_number: int
+  steps_remaining: int
+  weather:
+    type: string
+    enum: [clear, storm, flood]
+  last_action_result:
+    type: string
+    enum: [success, invalid, blocked, insufficient_resources, none]
+
+# ---------------------------------------------------------------------------
+# Action space
+# ---------------------------------------------------------------------------
+action_space:
+  type: discrete_structured
+  actions:
+    deploy_team:
+      description: Move N rescue teams to a zone. Fails if road blocked.
+      params:
+        to_zone: string
+        units:
+          type: int
+          min: 1
+    send_supplies:
+      description: Route supply units to a zone. Oversupply tracked as waste.
+      params:
+        to_zone: string
+        units:
+          type: int
+          min: 1
+    airlift:
+      description: Bypass road blocks. Consumes one scarce airlift unit.
+      params:
+        to_zone: string
+        type:
+          type: string
+          enum: [rescue, supply]
+    recall_team:
+      description: Pull teams back to HQ. 1-step transit delay before available.
+      params:
+        from_zone: string
+        units:
+          type: int
+          min: 1
+    wait:
+      description: Agent does nothing. Penalized every time.
+      params: {}
+
+# ---------------------------------------------------------------------------
+# Reward function summary
+# ---------------------------------------------------------------------------
+reward:
+  step_formula: "clamp(R_positive - R_negative, -1.0, 1.0)"
+  episode_formula: "(tanh(cumulative / max_steps * 2) + 1) / 2"
+  positive_components:
+    r_rescue:          {weight: 0.40, description: Normalized rescue progress}
+    r_supply:          {weight: 0.20, description: Supply gap closed}
+    r_zone_complete:   {weight: 0.15, description: Zone fully rescued + supplied}
+    r_critical_rescue: {weight: 0.15, description: Rescues from severity >= 0.75 zones}
+    r_airlift_precision: {weight: 0.10, description: Smart airlift use on blocked+critical}
+  negative_components:
+    p_critical_deaths:  {weight: -0.40, description: Critical casualties expired}
+    p_urgency_decay:    {weight: -0.15, description: Unattended high-severity zones}
+    p_overcommitment:   {weight: -0.10, description: Teams idle in completed zones}
+    p_supply_waste:     {weight: -0.05, description: Supply over-delivered}
+    p_false_sos:        {weight: -0.05, description: Resources wasted on false SOS}
+    p_wait:             {weight: -0.05, description: Flat wait penalty}
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+tasks:
+  task_1:
+    name: Single Zone Flood Response
+    difficulty: easy
+    max_steps: 10
+    zones: 1
+    gpt4_target_score: "0.70-0.85"
+    novelty: Validates environment correctness.
+
+  task_2:
+    name: Multi-Zone Earthquake Response
+    difficulty: medium
+    max_steps: 15
+    zones: 5
+    gpt4_target_score: "0.40-0.60"
+    novelty: Resource scarcity + dynamic road conditions + single airlift decision.
+
+  task_3:
+    name: Cyclone with Cascading Failures and False SOS
+    difficulty: hard
+    max_steps: 20
+    zones: 10
+    gpt4_target_score: "0.20-0.40"
+    novelty: >
+      3 false SOS zones (H, I, J) that send genuine-looking distress signals but
+      have zero casualties. Dam breaks at step 7, adding 60 casualties to Zone E.
+      Weather-driven road blocks change dynamically. Tests agent skepticism,
+      adaptive replanning, and multi-resource allocation simultaneously.
+
+# ---------------------------------------------------------------------------
+# Environment metadata
+# ---------------------------------------------------------------------------
+environment:
+  type: sequential_decision
+  partial_observability: true
+  stochastic: false
+  multi_agent: false
+  episode_length_range: [10, 20]
+  scoring_range: [0.0, 1.0]
+  hidden_fields:
+    - casualties_critical
+    - is_false_sos
+  novel_mechanics:
+    - false_sos_signals
+    - dam_break_mid_episode
+    - weather_driven_road_blocks
+    - airlift_precision_scoring
+    - 1_step_team_transit_delay
