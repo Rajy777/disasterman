@@ -1,0 +1,410 @@
+================================================================
+DISASTERMAN v3 — MANUAL TESTING PROCEDURE
+Meta PyTorch OpenEnv Hackathon by Scaler
+================================================================
+Live URL:  https://krishpotanwar-disaster-relief-env.hf.space
+Local URL: http://localhost:7860
+================================================================
+
+Copy the BASE variable for whichever environment you're testing:
+
+  # For live HF Space:
+  BASE="https://krishpotanwar-disaster-relief-env.hf.space"
+
+  # For local dev:
+  BASE="http://localhost:7860"
+
+All curl commands below use $BASE. Run the export above first.
+
+
+================================================================
+STEP 1 — HEALTH CHECK
+================================================================
+
+curl $BASE/health
+
+Expected response:
+  {"status":"ok","env":"DRC-Env v1.0","sessions_active":0}
+
+What it proves: Server is alive and responsive.
+
+
+================================================================
+STEP 2 — LIST ALL TASKS
+================================================================
+
+curl $BASE/tasks | python3 -m json.tool
+
+Expected response: JSON with 3 tasks —
+  task_1: "Single Zone Flood Response"       (max_steps: 10)
+  task_2: "Multi-Zone Earthquake Response"   (max_steps: 15)
+  task_3: "Cyclone + Cascading Failures..."  (max_steps: 20)
+
+What it proves: All 3 tasks configured, judges can discover the env.
+
+
+================================================================
+STEP 3 — TASK 1 FULL EPISODE (Easy — single zone)
+================================================================
+
+# 3a. Reset to get session_id and first observation
+curl -s -X POST $BASE/reset \
+     -H "Content-Type: application/json" \
+     -d '{"task_id":"task_1"}' | python3 -m json.tool
+
+Save the session_id from the response. Then set:
+  SID="<session_id from above>"
+
+Expected observation: 1 zone (Zone A), casualties > 0, teams_available > 0
+
+# 3b. Deploy teams to Zone A
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID\",\"action\":{\"action\":\"deploy_team\",\"to_zone\":\"A\",\"units\":3}}" \
+     | python3 -m json.tool
+
+Expected:
+  - last_action_result: "success"
+  - reward > 0 (rescuing casualties)
+  - reward_breakdown shows r_rescue > 0.0
+
+# 3c. Send supplies to Zone A
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID\",\"action\":{\"action\":\"send_supplies\",\"to_zone\":\"A\",\"units\":5}}" \
+     | python3 -m json.tool
+
+Expected:
+  - last_action_result: "success"
+  - reward_breakdown shows r_supply > 0.0
+
+# 3d. View full internal state (grader view — includes hidden fields)
+curl -s $BASE/state/$SID | python3 -m json.tool
+
+Expected: zones array includes is_false_sos and casualties_critical fields
+  (these are hidden from agent but visible to grader)
+
+# 3e. Keep stepping until done=true (deploy teams / send supplies each step)
+#     Repeat the deploy_team and send_supplies calls from 3b/3c.
+#     When done=true appears in the response, proceed to 3f.
+
+# 3f. Run the grader on the completed episode
+curl -s $BASE/state/$SID > /tmp/final_state.json
+cat /tmp/final_state.json | python3 -c "
+import json, sys
+state = json.load(sys.stdin)
+print('Event log length:', len(state.get('event_log', [])))
+print('Cumulative reward:', state.get('cumulative_reward'))
+print('Done:', state.get('done'))
+"
+
+What it proves: Complete episode lifecycle works end-to-end.
+
+
+================================================================
+STEP 4 — TASK 2 EPISODE (Medium — 5 zones, road blocks)
+================================================================
+
+# 4a. Reset task_2
+curl -s -X POST $BASE/reset \
+     -H "Content-Type: application/json" \
+     -d '{"task_id":"task_2"}' | python3 -m json.tool
+
+Note session_id → SID2="<id>"
+
+# 4b. Find a road-blocked zone and test deploy_team (should return 'blocked')
+#     Look at the observation — find any zone where road_blocked: true
+#     Example: if Zone C is blocked:
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID2\",\"action\":{\"action\":\"deploy_team\",\"to_zone\":\"C\",\"units\":2}}" \
+     | python3 -m json.tool
+
+Expected: last_action_result: "blocked"
+
+# 4c. Airlift to bypass the road block
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID2\",\"action\":{\"action\":\"airlift\",\"to_zone\":\"C\",\"type\":\"rescue\"}}" \
+     | python3 -m json.tool
+
+Expected:
+  - last_action_result: "success"
+  - airlifts_remaining decreases by 1
+  - reward_breakdown shows r_airlift_precision > 0.0 (if zone is critical)
+
+# 4d. Test insufficient resources
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID2\",\"action\":{\"action\":\"deploy_team\",\"to_zone\":\"A\",\"units\":9999}}" \
+     | python3 -m json.tool
+
+Expected: last_action_result: "insufficient_resources"
+
+What it proves: Multi-zone logic, road blocks, airlift bypass, resource limits.
+
+
+================================================================
+STEP 5 — TASK 3 NOVEL MECHANICS (Hard — false SOS + dam break)
+================================================================
+
+# 5a. Reset task_3
+curl -s -X POST $BASE/reset \
+     -H "Content-Type: application/json" \
+     -d '{"task_id":"task_3"}' | python3 -m json.tool
+
+Note session_id → SID3="<id>"
+
+# 5b. Check hidden fields — zones H, I, J are false SOS zones
+curl -s $BASE/state/$SID3 | python3 -c "
+import json, sys
+state = json.load(sys.stdin)
+for z in state['zones']:
+    if z['is_false_sos']:
+        print(f'FALSE SOS zone: {z[\"zone_id\"]} | casualties_total={z[\"casualties_total\"]} | should be 0')
+"
+
+Expected: Zones H, I, J printed with casualties_total=0
+
+# 5c. Verify false SOS zones LOOK real to agent (sos_active=true in observation)
+#     The observation returned by /reset shows sos_active but NOT is_false_sos
+#     Look at the observation from step 5a — zones H, I, J should show sos_active: true
+
+# 5d. Deploy to a false SOS zone (Zone H) to verify penalty fires
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID3\",\"action\":{\"action\":\"send_supplies\",\"to_zone\":\"H\",\"units\":2}}" \
+     | python3 -m json.tool
+
+Expected:
+  - last_action_result: "success" (env doesn't reject false SOS — agent must detect it)
+  - reward_breakdown shows p_false_sos > 0.0 (penalty applied)
+
+# 5e. Trigger dam break — step 7 times total to reach dam break
+#     (Dam break fires during the 8th step call)
+#     Do 6 more steps (wait is fine, we already did 1 step above):
+
+for i in 1 2 3 4 5 6; do
+  curl -s -X POST $BASE/step \
+       -H "Content-Type: application/json" \
+       -d "{\"session_id\":\"$SID3\",\"action\":{\"action\":\"wait\"}}" \
+       | python3 -c "import json,sys; r=json.load(sys.stdin); print(f'step {r[\"observation\"][\"step_number\"]}: reward={r[\"reward\"]:.4f}')"
+done
+
+# 5f. Check Zone E casualties AFTER dam break (should have jumped significantly)
+curl -s $BASE/state/$SID3 | python3 -c "
+import json, sys
+state = json.load(sys.stdin)
+for z in state['zones']:
+    if z['zone_id'] == 'E':
+        remaining = z['casualties_total'] - z['casualties_rescued']
+        print(f'Zone E casualties_total={z[\"casualties_total\"]} rescued={z[\"casualties_rescued\"]} remaining={remaining}')
+print('Events:', [e.get(\"type\") for e in state.get(\"event_log\", [])])
+"
+
+Expected:
+  - Zone E casualties_total significantly higher than initial (dam break added ~60 casualties)
+  - event_log contains a "dam_break" event type
+
+What it proves: False SOS mechanics, dam break cascading failure, all 3 novel mechanics work.
+
+
+================================================================
+STEP 6 — RECALL TEAM (transit delay mechanic)
+================================================================
+
+# 6a. Start fresh task_2 episode
+curl -s -X POST $BASE/reset \
+     -H "Content-Type: application/json" \
+     -d '{"task_id":"task_2"}' | python3 -m json.tool
+
+SID4="<id>"
+
+# 6b. Deploy 2 teams to Zone A
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID4\",\"action\":{\"action\":\"deploy_team\",\"to_zone\":\"A\",\"units\":2}}" \
+     | python3 -m json.tool
+
+# 6c. Recall the teams
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID4\",\"action\":{\"action\":\"recall_team\",\"from_zone\":\"A\",\"units\":2}}" \
+     | python3 -m json.tool
+
+Expected:
+  - last_action_result: "success"
+  - teams_in_transit shows {"A": 2} (1-step delay before teams return to HQ)
+
+# 6d. One more wait step — teams should return to HQ
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID4\",\"action\":{\"action\":\"wait\"}}" \
+     | python3 -m json.tool
+
+Expected: teams_in_transit is empty {}, teams_available increases by 2
+
+What it proves: 1-step transit delay mechanic works correctly.
+
+
+================================================================
+STEP 7 — WAIT PENALTY
+================================================================
+
+curl -s -X POST $BASE/reset \
+     -H "Content-Type: application/json" \
+     -d '{"task_id":"task_1"}' | python3 -m json.tool
+SID5="<id>"
+
+curl -s -X POST $BASE/step \
+     -H "Content-Type: application/json" \
+     -d "{\"session_id\":\"$SID5\",\"action\":{\"action\":\"wait\"}}" \
+     | python3 -m json.tool
+
+Expected:
+  - last_action_result: "success"
+  - reward < 0
+  - reward_breakdown shows p_wait: 0.05 (and p_urgency_decay > 0 for unattended zones)
+
+What it proves: Wait penalty correctly discourages inaction.
+
+
+================================================================
+STEP 8 — GRADER ENDPOINT
+================================================================
+
+# 8a. Run a full task_1 greedy episode and grade it
+curl -s -X POST $BASE/reset \
+     -H "Content-Type: application/json" \
+     -d '{"task_id":"task_1"}' | python3 -c "
+import json, sys, subprocess, os
+data = json.load(sys.stdin)
+sid = data['session_id']
+base = os.environ.get('BASE', 'http://localhost:7860')
+print('Session:', sid)
+
+# Greedy: deploy + supply every step
+for i in range(10):
+    r = subprocess.run(['curl','-s','-X','POST', f'{base}/step',
+        '-H','Content-Type: application/json',
+        '-d', json.dumps({'session_id': sid, 'action': {'action':'deploy_team','to_zone':'A','units':3}})],
+        capture_output=True, text=True)
+    resp = json.loads(r.stdout)
+    if resp.get('done'):
+        print('Episode done at step', resp['observation']['step_number'])
+        break
+
+# Grade it
+state_r = subprocess.run(['curl','-s', f'{base}/state/{sid}'], capture_output=True, text=True)
+state = json.loads(state_r.stdout)
+grade_r = subprocess.run(['curl','-s','-X','POST', f'{base}/grader',
+    '-H','Content-Type: application/json',
+    '-d', json.dumps({'event_log': state['event_log'], 'final_state': state, 'task_id': 'task_1'})],
+    capture_output=True, text=True)
+print('Grader result:', grade_r.stdout)
+"
+
+Expected:
+  - score in [0.0, 1.0]
+  - breakdown object with all 8 dimensions scored
+
+What it proves: /grader endpoint works, all 8 scoring dimensions active.
+
+
+================================================================
+STEP 9 — BASELINE AGENT (requires GROQ_API_KEY or OPENAI_API_KEY)
+================================================================
+
+# This runs the full 4-stage AI pipeline on all 3 tasks.
+# On HF Space, the GROQ_API_KEY is set as a secret — no key needed in curl.
+# Locally, export GROQ_API_KEY=<your_key> before starting the server.
+
+curl -s -X POST $BASE/baseline \
+     -H "Content-Type: application/json" \
+     -d '{"tasks":["task_1","task_2","task_3"]}' | python3 -m json.tool
+
+Expected (takes 2-4 minutes):
+  {
+    "task_1": { "score": 0.75-0.90, "steps": 10 },
+    "task_2": { "score": 0.45-0.65, "steps": 15 },
+    "task_3": { "score": 0.25-0.45, "steps": 20 }
+  }
+
+If you get 503: GROQ_API_KEY not configured. See SUBMISSION_PROCEDURE.txt.
+If you get 504: Rate limit hit. Wait 60 seconds and retry single task:
+  curl -s -X POST $BASE/baseline -H "Content-Type: application/json" \
+       -d '{"tasks":["task_1"]}' | python3 -m json.tool
+
+What it proves: Full 4-stage PyTorch → LLM pipeline works end-to-end.
+
+
+================================================================
+STEP 10 — INTERACTIVE API DOCS
+================================================================
+
+Open in browser: $BASE/docs
+
+You can explore and test ALL endpoints interactively via Swagger UI.
+Use "Try it out" on each endpoint to test without curl.
+
+Particularly useful for exploring:
+  - /reset — see all task_id options
+  - /step — test all 5 action types
+  - /grader — see all 8 scoring dimensions
+  - /state/{session_id} — see full internal state with hidden fields
+
+
+================================================================
+AUTOMATED TEST SUITE (runs all 98 tests locally)
+================================================================
+
+# From the disasterman-v2/ directory:
+cd disasterman-v2/
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+python agents/train_zone_scorer.py   # one-time, ~8 seconds
+python test_env.py
+
+Expected final output:
+  RESULTS: 98/98 passed  (0 failed)
+  All tests passed. Environment is submission-ready.
+
+Test groups covered:
+  GROUP  1 — OpenEnv API Contract         (18 tests)
+  GROUP  2 — Task Configurations          (17 tests)
+  GROUP  3 — False SOS Signal Mechanics    (6 tests)
+  GROUP  4 — Cascading Failure / Dam Break (3 tests)
+  GROUP  5 — Resource Constraint Enforce   (6 tests)
+  GROUP  6 — Airlift Precision & Scarcity  (4 tests)
+  GROUP  7 — Reward Function Components   (11 tests)
+  GROUP  8 — Grader Score Monotonicity     (9 tests)
+  GROUP  9 — Episode Termination           (9 tests)
+  GROUP 10 — PyTorch ZoneScorerNet         (8 tests)
+  GROUP 11 — Multi-Session Isolation       (4 tests)
+  GROUP 12 — 1-Step Team Transit Delay     (3 tests)
+
+
+================================================================
+CHECKLIST — WHAT TO VERIFY BEFORE SUBMISSION
+================================================================
+
+  [ ] GET  /health            → {"status":"ok"}
+  [ ] GET  /tasks             → all 3 tasks present
+  [ ] POST /reset task_1      → session_id + 1-zone observation
+  [ ] POST /reset task_2      → session_id + 5-zone observation
+  [ ] POST /reset task_3      → session_id + 10-zone observation
+  [ ] POST /step deploy_team  → last_action_result: "success"
+  [ ] POST /step send_supplies→ last_action_result: "success"
+  [ ] POST /step airlift      → last_action_result: "success", airlifts_remaining--
+  [ ] POST /step recall_team  → teams_in_transit populated
+  [ ] POST /step wait         → last_action_result: "success", reward < 0
+  [ ] POST /step blocked road → last_action_result: "blocked"
+  [ ] POST /step over-commit  → last_action_result: "insufficient_resources"
+  [ ] GET  /state/{id}        → is_false_sos visible for task_3 zones H/I/J
+  [ ] task_3 dam break        → Zone E casualties increase after step 7
+  [ ] POST /grader            → score in [0.0, 1.0] with 8 dimensions
+  [ ] POST /baseline          → scores for all 3 tasks (requires API key)
+  [ ] GET  /docs              → Swagger UI loads
+  [ ] python test_env.py      → 98/98 passed
+
+================================================================
