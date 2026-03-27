@@ -36,9 +36,10 @@ app = FastAPI(
     title="Disaster Relief Coordination Env (DRC-Env)",
     description=(
         "OpenEnv-compliant AI agent training environment. "
-        "Simulates multi-zone disaster response under cascading failures."
+        "Simulates multi-zone disaster response under cascading failures, false SOS signals, "
+        "and weather events. Agent pipeline: PyTorch ZoneScorer → Triage → Planner → Action."
     ),
-    version="1.0.0",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -218,10 +219,11 @@ def baseline(req: BaselineRequest):
     WARNING: This takes 1–3 minutes to complete.
     """
     groq_key = os.environ.get("GROQ_API_KEY", "")
-    if not groq_key:
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if not groq_key and not openai_key:
         raise HTTPException(
             status_code=503,
-            detail="GROQ_API_KEY not set. Configure it in HF Space Secrets to enable /baseline."
+            detail="No API key set. Configure GROQ_API_KEY (recommended, free) or OPENAI_API_KEY in HF Space Secrets to enable /baseline."
         )
 
     # Import here to avoid loading OpenAI client on startup if key not present
@@ -243,7 +245,8 @@ def baseline(req: BaselineRequest):
 
     return {
         "baseline_scores": results,
-        "model": "llama-3.3-70b-versatile (task_3) / llama-3.1-8b-instant (task_1, task_2)",
+        "pipeline": "PyTorch ZoneScorer → Triage → Planner → Action (4-stage)",
+        "model": "llama-3.3-70b-versatile (all tasks)",
         "note": "Scores are reproducible at temperature=0.",
     }
 

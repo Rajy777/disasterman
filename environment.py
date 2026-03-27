@@ -283,17 +283,26 @@ class DisasterEnv:
                 if zone:
                     zone.road_blocked = False
 
-        # --- Dam break event ---
+        # --- Cascading events (dam break, aftershock, contamination spread, etc.) ---
+        # Supports both legacy single `dam_break` dict and new `events` list (additive).
+        events_this_step: list[dict] = []
         dam = cfg.get("dam_break")
         if dam and step == dam["step"]:
-            zone = self._get_zone(dam["zone"])
+            events_this_step.append(dam)
+        for evt in cfg.get("events", []):
+            if evt.get("step") == step:
+                events_this_step.append(evt)
+
+        for evt in events_this_step:
+            zone = self._get_zone(evt.get("zone"))
             if zone:
-                zone.casualties_total += dam["casualties"]
-                zone.casualties_critical += dam["critical"]
-                zone.supply_needed += dam["supply_needed"]
-                zone.severity = min(1.0, zone.severity + 0.3)
+                zone.casualties_total += evt.get("casualties", 0)
+                zone.casualties_critical += evt.get("critical", 0)
+                zone.supply_needed += evt.get("supply_needed", 0)
+                zone.severity = min(1.0, zone.severity + evt.get("severity_boost", 0.3))
                 zone.completed = False
-                self._log("dam_break", {"zone": dam["zone"], "added_casualties": dam["casualties"]})
+                event_type = evt.get("type", "dam_break")
+                self._log(event_type, {"zone": evt["zone"], "added_casualties": evt.get("casualties", 0)})
 
         # --- Rescue progress ---
         rescue_rate = cfg.get("rescue_rate_per_team", 4)

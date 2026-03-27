@@ -1,22 +1,25 @@
 """
-inference_v2.py — Multi-Agent Parallel Disaster Response System v2.
+inference_v2.py — DisasterMan v3: 4-Stage Multi-Agent Pipeline.
 
-Architecture:
-  - 3 tasks run in PARALLEL via ThreadPoolExecutor
-  - Each step uses a 2-agent chain: Triage Agent → Action Agent
-  - Task 3 uses llama-3.3-70b-versatile (better planning for complex scenarios)
-  - Task 1 & 2 use llama-3.1-8b-instant (fast, already proven)
+Architecture per step:
+  1. PyTorch ZoneScorer  — local neural net (<1ms), ranks zones by priority
+  2. Triage Agent        — LLM analysis, false SOS detection, deadline alerts
+  3. Planner Agent       — LLM 3-step lookahead, resource allocation plan
+  4. Action Agent        — LLM final action + hard constraint validator
 
-Key improvements over v1:
-  - False SOS heuristic: detected before LLM call (zero casualties + zero gap = false)
-  - Triage agent provides structured priority list to action agent
-  - Rolling history (last 3 exchanges) prevents context bloat on long episodes
-  - Model upgrade for Task 3 only
+All tasks use llama-3.3-70b-versatile (best free planning model via Groq).
+All 3 tasks run in parallel via ThreadPoolExecutor.
+
+Anti-hallucination strategy:
+  - Explicit constraint injection (valid zones, blocked zones, resource counts)
+  - Post-LLM constraint validator in action_agent._validate_and_fix()
+  - Deterministic fallback heuristic if LLM output fails validation
 
 Usage:
   export GROQ_API_KEY=your_key
   python inference_v2.py
 """
+
 from __future__ import annotations
 import os
 import time
@@ -25,17 +28,40 @@ from openai import OpenAI
 
 from environment import DisasterEnv
 from graders import grade_episode
+from agents.zone_scorer import score_zones
 from agents.triage_agent import run_triage
+from agents.planner_agent import run_planner
 from agents.action_agent import get_action
 
-GROQ_KEY = os.environ.get("GROQ_API_KEY", "")
+# API key resolution: prefer GROQ (free, fast Llama 3.3 70B).
+# Falls back to OPENAI_API_KEY for OpenAI GPT models if Groq key not set.
+# The OpenAI Python client is used in both cases (OpenEnv spec requirement).
+GROQ_KEY   = os.environ.get("GROQ_API_KEY", "")
+OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-# Model selection per task — Task 3 needs deeper reasoning
-TASK_MODELS = {
-    "task_1": "llama-3.1-8b-instant",
-    "task_2": "llama-3.1-8b-instant",
-    "task_3": "llama-3.3-70b-versatile",
-}
+def _build_client() -> tuple[OpenAI, str]:
+    """
+    Return (client, model_name) using the best available API key.
+    Groq is preferred: free tier supports llama-3.3-70b-versatile with high rate limits.
+    Falls back to OpenAI GPT-4o-mini if only OPENAI_API_KEY is set.
+    """
+    if GROQ_KEY:
+        return (
+            OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_KEY),
+            "llama-3.3-70b-versatile",
+        )
+    if OPENAI_KEY:
+        return (
+            OpenAI(api_key=OPENAI_KEY),
+            "gpt-4o-mini",
+        )
+    raise EnvironmentError(
+        "No API key found. Set GROQ_API_KEY (recommended, free) "
+        "or OPENAI_API_KEY in your environment."
+    )
+
+# Step delay (seconds) — rate-limit buffer (3 LLM calls per step)
+STEP_DELAY = 0.5
 
 # GPT-4 target ranges for reference
 SCORE_TARGETS = {
@@ -45,90 +71,114 @@ SCORE_TARGETS = {
 }
 
 
-def run_task(task_id: str) -> dict:
+def run_task(task_id: str, verbose: bool = True) -> dict:
     """
-    Run one full episode using the 2-agent chain (Triage + Action).
-    Returns result dict with grader_score, cumulative_reward, steps_taken.
+    Run one full episode using the 4-stage pipeline.
+
+    Returns dict with:
+        task_id, grader_score, cumulative_reward, steps_taken, model
     """
-    model = TASK_MODELS[task_id]
-    client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_KEY)
+    client, MODEL = _build_client()
 
     env = DisasterEnv()
     obs = env.reset(task_id)
-    history: list[dict] = []
+    history: list[dict] = []    # rolling action history for Action Agent
     total_reward = 0.0
     step = 0
 
-    print(f"\n{'='*60}")
-    print(f"[{task_id.upper()}] Starting | Model: {model}")
-    print(f"{'='*60}")
+    if verbose:
+        print(f"\n{'='*65}")
+        print(f"[{task_id.upper()}] Starting | 4-stage pipeline | Model: {MODEL}")
+        print(f"{'='*65}")
 
     while True:
         obs_dict = obs.model_dump()
 
-        # Stage 1 — Triage Analysis
-        triage = run_triage(obs_dict, client, model)
+        # Stage 1 — PyTorch zone scoring (local, no API call)
+        zone_scores = score_zones(obs_dict)
 
-        # Stage 2 — Action Decision
-        action = get_action(obs_dict, triage, history, client, model)
+        # Stage 2 — Triage analysis (LLM, consumes PyTorch scores)
+        triage = run_triage(obs_dict, client, MODEL, zone_scores=zone_scores)
+
+        # Stage 3 — Strategic planner (LLM, 3-step lookahead)
+        plan = run_planner(obs_dict, triage, zone_scores, client)
+
+        # Stage 4 — Action execution (LLM + constraint validator)
+        action = get_action(
+            obs_dict, triage, history, client, MODEL,
+            zone_scores=zone_scores,
+            plan=plan,
+        )
 
         result = env.step(action)
         total_reward += result.reward
         step += 1
 
-        false_sos = triage.get("false_sos_suspects", [])
-        deadlines = triage.get("deadline_alerts", [])
-        deadline_str = f" [DEADLINES:{[d['zone_id'] for d in deadlines]}]" if deadlines else ""
-        false_str = f" [FALSE_SOS:{false_sos}]" if false_sos else ""
+        if verbose:
+            false_sos = triage.get("false_sos_suspects", [])
+            deadlines = triage.get("deadline_alerts", [])
+            top_score = zone_scores[0]["zone_id"] if zone_scores else "?"
 
-        print(
-            f"[{task_id}] S{step:02d} | {action.action:15s} "
-            f"to={str(action.to_zone):4s} units={str(action.units):4s} "
-            f"res={result.observation.last_action_result:25s} | "
-            f"r={result.reward:+.3f} cum={total_reward:+.3f}"
-            + deadline_str + false_str
-        )
+            suffix = ""
+            if deadlines:
+                suffix += f" [DL:{[d['zone_id'] for d in deadlines]}]"
+            if false_sos:
+                suffix += f" [FSOS:{false_sos}]"
+
+            print(
+                f"[{task_id}] S{step:02d} | {action.action:15s} "
+                f"to={str(action.to_zone):4s} u={str(action.units):4s} "
+                f"res={result.observation.last_action_result:20s} | "
+                f"r={result.reward:+.3f} cum={total_reward:+.3f} | top={top_score}"
+                + suffix
+            )
 
         obs = result.observation
         if result.done:
             break
 
-        # Rate limit buffer: 70B model needs slightly more time
-        time.sleep(0.4 if model.endswith("70b-versatile") else 0.2)
+        time.sleep(STEP_DELAY)
 
     final_state = env.state()
     score = grade_episode(final_state["event_log"], final_state, task_id)
     lo, hi = SCORE_TARGETS[task_id]
     status = "✓ IN TARGET" if lo <= score <= hi else ("▲ ABOVE" if score > hi else "✗ BELOW")
 
-    print(f"\n[{task_id.upper()}] Score: {score:.4f} | Target: {lo:.2f}–{hi:.2f} | {status}")
-    print(f"[{task_id.upper()}] Cumulative reward: {total_reward:.4f} | Steps: {step}")
+    if verbose:
+        print(f"\n[{task_id.upper()}] Score: {score:.4f} | Target: {lo:.2f}–{hi:.2f} | {status}")
+        print(f"[{task_id.upper()}] Reward: {total_reward:.4f} | Steps: {step}")
 
     return {
         "task_id": task_id,
         "grader_score": score,
         "cumulative_reward": total_reward,
         "steps_taken": step,
-        "model": model,
+        "model": MODEL,
     }
 
 
 def run_all_parallel() -> dict:
     """
-    Run all 3 tasks in parallel using ThreadPoolExecutor(max_workers=3).
-    Each task runs its own env + agent chain independently.
+    Run all 3 tasks in parallel via ThreadPoolExecutor(max_workers=3).
+    Each task has its own independent env + agent chain + Groq client.
     """
-    if not GROQ_KEY:
-        raise EnvironmentError("GROQ_API_KEY environment variable not set.")
+    if not GROQ_KEY and not OPENAI_KEY:
+        raise EnvironmentError(
+            "No API key found. Set GROQ_API_KEY (recommended, free at https://console.groq.com) "
+            "or OPENAI_API_KEY in your environment."
+        )
 
-    print("\n" + "=" * 60)
-    print("DisasterMan v2 — Multi-Agent Parallel Runner")
-    print("=" * 60)
-    print("  task_1: llama-3.1-8b-instant  (easy, single zone)")
-    print("  task_2: llama-3.1-8b-instant  (medium, multi-zone)")
-    print("  task_3: llama-3.3-70b-versatile  (hard, cyclone+false SOS)")
-    print("  Agent chain: Triage → Action (2 LLM calls per step)")
-    print("=" * 60)
+    _, model_name = _build_client()
+
+    print("\n" + "=" * 65)
+    print("DisasterMan v3 — 4-Stage Multi-Agent Pipeline")
+    print("=" * 65)
+    print("  Stage 1: PyTorch ZoneScorerNet  (local, ~0ms)")
+    print(f"  Stage 2: Triage Agent           ({model_name}, ~800ms)")
+    print(f"  Stage 3: Planner Agent          ({model_name}, ~1s)")
+    print(f"  Stage 4: Action Agent + Validator ({model_name}, ~600ms)")
+    print("  Running tasks: task_1, task_2, task_3 in PARALLEL")
+    print("=" * 65)
 
     results: dict = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -152,20 +202,19 @@ def run_all_parallel() -> dict:
 
 
 def print_summary(results: dict) -> None:
-    print("\n" + "=" * 60)
-    print("DISASTERMAN v2 — FINAL SUMMARY")
-    print("=" * 60)
+    print("\n" + "=" * 65)
+    print("DISASTERMAN v3 — FINAL SCORES")
+    print("=" * 65)
     total = 0.0
     for tid in ["task_1", "task_2", "task_3"]:
         r = results.get(tid, {})
         score = r.get("grader_score", 0.0)
         lo, hi = SCORE_TARGETS[tid]
-        status = "✓" if lo <= score <= hi else ("▲" if score > hi else "✗")
-        model = r.get("model", "?")
-        print(f"  {tid}: {score:.4f}  target={lo:.2f}–{hi:.2f}  {status}  [{model}]")
+        status = "✓" if lo <= score <= hi else ("▲ BEAT IT" if score > hi else "✗")
+        print(f"  {tid}: {score:.4f}  GPT-4 target={lo:.2f}–{hi:.2f}  {status}")
         total += score
     print(f"\n  Combined score: {total:.4f} / 3.0")
-    print("=" * 60)
+    print("=" * 65)
 
 
 if __name__ == "__main__":

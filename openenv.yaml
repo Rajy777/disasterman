@@ -1,10 +1,13 @@
 name: disaster-relief-coordination-env
-version: "1.0.0"
+version: "3.0.0"
 description: >
   Multi-zone disaster relief coordination environment for AI agent training.
   An agent acts as an emergency coordinator — deploying rescue teams, routing
   supply trucks, and making airlift decisions under time pressure, resource
   constraints, and deliberately misleading false SOS signals.
+  Baseline agent uses a 4-stage pipeline: PyTorch ZoneScorerNet (local MLP) →
+  Triage Agent (LLM) → Planner Agent (LLM, 3-step lookahead) →
+  Action Agent (LLM + hard constraint validator).
 
 authors:
   - Raj Yadav
@@ -65,8 +68,9 @@ api:
     method: POST
     path: /baseline
     description: >
-      Run the baseline agent (Llama 3 via Groq) on all 3 tasks.
-      Requires GROQ_API_KEY environment variable.
+      Run the 4-stage baseline agent on all 3 tasks.
+      Requires GROQ_API_KEY (recommended, free) or OPENAI_API_KEY environment variable.
+      Pipeline: PyTorch ZoneScorerNet → Triage → Planner → Action Agent.
 
 # ---------------------------------------------------------------------------
 # Observation space
@@ -212,3 +216,32 @@ environment:
     - weather_driven_road_blocks
     - airlift_precision_scoring
     - 1_step_team_transit_delay
+
+# ---------------------------------------------------------------------------
+# Baseline agent pipeline (v3)
+# ---------------------------------------------------------------------------
+baseline_agent:
+  pipeline: "PyTorch ZoneScorerNet → Triage Agent → Planner Agent → Action Agent"
+  stages:
+    1_zone_scorer:
+      type: pytorch_mlp
+      architecture: "Linear(6→16) → ReLU → Linear(16→1) → Sigmoid"
+      latency: "<1ms"
+      trained_on: "50K synthetic domain-knowledge examples"
+      features: [severity, casualty_ratio, supply_ratio, road_blocked, unattended, time_pressure]
+    2_triage_agent:
+      type: llm
+      model: llama-3.3-70b-versatile
+      purpose: "False SOS detection, deadline alerts, zone prioritization"
+    3_planner_agent:
+      type: llm
+      model: llama-3.3-70b-versatile
+      purpose: "3-step lookahead resource allocation plan"
+    4_action_agent:
+      type: llm_with_validator
+      model: llama-3.3-70b-versatile
+      purpose: "Final action + hard constraint validation + deterministic fallback"
+  anti_hallucination:
+    - explicit_constraint_injection
+    - post_llm_constraint_validator
+    - deterministic_fallback_heuristic

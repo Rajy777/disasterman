@@ -1,0 +1,242 @@
+================================================================
+DISASTERMAN v3 — HACKATHON SUBMISSION PROCEDURE
+Meta PyTorch OpenEnv Hackathon by Scaler
+================================================================
+Team name:         Agentic Apocalypse
+HF username:       krishpotanwar
+HF Space:          https://huggingface.co/spaces/krishpotanwar/disaster-relief-env
+Live URL:          https://krishpotanwar-disaster-relief-env.hf.space
+Submission portal: https://www.scaler.com/school-of-technology/meta-pytorch-hackathon
+Portal opened:     March 25, 2026 (OPEN NOW)
+Round 1 deadline:  April 8, 2026
+Registration:      Closes April 3, 2026
+Results:           April 10, 2026
+Finale (Bangalore):April 25-26, 2026
+================================================================
+
+
+PHASE 1 — LOCAL VALIDATION (Do this before anything else)
+===========================================================
+
+Step 1: Install dependencies
+------------------------------
+  cd disasterman-v2/
+  pip install torch --index-url https://download.pytorch.org/whl/cpu
+  pip install -r requirements.txt
+
+Step 2: Train ZoneScorerNet (one-time)
+----------------------------------------
+  python agents/train_zone_scorer.py
+  # Expected output: "ZoneScorerNet saved to agents/zone_scorer_weights.pt"
+  # Takes ~8 seconds on CPU
+
+Step 3: Start the server locally
+----------------------------------
+  python main.py
+  # Server starts at http://localhost:7860
+
+Step 4: Verify endpoints
+--------------------------
+  # Health check
+  curl http://localhost:7860/health
+  # Expected: {"status":"ok","env":"DRC-Env v1.0","sessions_active":0}
+
+  # Task list (judges verify 3+ tasks)
+  curl http://localhost:7860/tasks
+  # Expected: JSON with task_1, task_2, task_3
+
+  # Test episode
+  SESSION=$(curl -s -X POST http://localhost:7860/reset \
+    -H "Content-Type: application/json" \
+    -d '{"task_id":"task_1"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
+  echo "Session: $SESSION"
+
+  curl -X POST http://localhost:7860/step \
+    -H "Content-Type: application/json" \
+    -d "{\"session_id\":\"$SESSION\",\"action\":{\"action\":\"deploy_team\",\"to_zone\":\"A\",\"units\":3}}"
+
+Step 5: Run baseline agent
+----------------------------
+  export GROQ_API_KEY=your_key_here   # get free key at console.groq.com
+  python inference_v2.py
+  # Expected: scores ~0.75-0.90 / ~0.45-0.65 / ~0.25-0.45 for tasks 1/2/3
+  # Takes 2-4 minutes (LLM calls)
+
+
+PHASE 2 — DEPLOY TO HUGGING FACE SPACES  [COMPLETED]
+======================================================
+
+The Space is already deployed and currently building (Docker build in progress).
+
+  Space page:   https://huggingface.co/spaces/krishpotanwar/disaster-relief-env
+  Live API URL: https://krishpotanwar-disaster-relief-env.hf.space
+
+  Completed steps:
+    - Space created (SDK=Docker, Visibility=Public)
+    - All files from disasterman-v2/ pushed to the Space repo
+    - GROQ_API_KEY secret added via Space Settings -> Repository secrets
+    - Docker build initiated — monitor progress in the Logs tab
+
+  Action required: Wait for the build to finish and the Space status
+  to change from "Building" to "Running" before proceeding to Phase 3.
+
+
+PHASE 3 — VERIFY LIVE DEPLOYMENT
+===================================
+
+Once the Space shows "Running" status, run these checks:
+
+  BASE="https://krishpotanwar-disaster-relief-env.hf.space"
+
+  # 1. Health check
+  curl $BASE/health
+  # Expected: {"status":"ok","env":"DRC-Env v1.0","sessions_active":0}
+
+  # 2. Tasks endpoint (judges call this first)
+  curl $BASE/tasks
+  # Expected: JSON with task_1, task_2, task_3
+
+  # 3. Full baseline run (takes 2-4 min, requires GROQ_API_KEY secret)
+  curl -X POST $BASE/baseline \
+       -H "Content-Type: application/json" \
+       -d '{"tasks":["task_1","task_2","task_3"]}'
+
+  # 4. Interactive API docs
+  open https://krishpotanwar-disaster-relief-env.hf.space/docs
+
+  # 5. Space logs (check for errors)
+  open https://huggingface.co/spaces/krishpotanwar/disaster-relief-env?logs=container
+
+
+PHASE 4 — PRE-SUBMISSION CHECKLIST
+=====================================
+Check every item before submitting:
+
+  [ ] HF Space shows "Running" status (not "Building" or "Error")
+  [ ] Space is set to PUBLIC (Settings -> Visibility -> Public)
+  [ ] /health returns {"status":"ok"}
+  [ ] /tasks returns all 3 tasks (task_1, task_2, task_3)
+  [ ] /reset works for each task_id
+  [ ] /step accepts all action types (deploy_team, send_supplies, airlift, recall_team, wait)
+  [ ] /state/{session_id} returns full state including hidden fields
+  [ ] /grader returns score in [0.0, 1.0]
+  [ ] /baseline returns scores for all 3 tasks (requires GROQ_API_KEY secret)
+  [ ] openenv.yaml is present and valid at root of repo
+  [ ] README.md is present and describes the environment
+  [ ] Dockerfile builds without errors (check HF Space Logs tab)
+  [ ] No API keys hardcoded in any source file
+
+
+PHASE 5 — SUBMIT TO HACKATHON PORTAL
+=======================================
+
+Portal opens March 28, 2026 at:
+  https://www.scaler.com/school-of-technology/meta-pytorch-hackathon
+
+Steps:
+  1. Go to the portal URL above and click "Submit" or "Register Submission"
+  2. Fill in:
+       - Team name:    Agentic Apocalypse
+       - HF Space URL: https://huggingface.co/spaces/krishpotanwar/disaster-relief-env
+       - GitHub repo URL (if required): your repo URL
+       - Brief description: see template below
+
+Submission description template:
+---------------------------------
+DRC-Env is a multi-zone disaster relief coordination environment where
+an AI agent deploys rescue teams, routes supplies, and makes airlift
+decisions under time pressure, resource scarcity, and false SOS signals.
+
+Our baseline agent uses a 4-stage pipeline:
+1. PyTorch ZoneScorerNet — small MLP (6->16->1) trained on 50K synthetic
+   examples, scores zones in <1ms using domain-knowledge features.
+2. Triage Agent — LLM detects false SOS signals and deadline alerts.
+3. Planner Agent — LLM generates 3-step lookahead resource allocation.
+4. Action Agent — LLM selects final action with hard constraint validator.
+
+Anti-hallucination: explicit constraint injection + post-LLM validator
++ deterministic fallback. All LLM stages use llama-3.3-70b-versatile.
+
+3 tasks: easy (1 zone), medium (5 zones + road blocks), hard (10 zones
++ false SOS + dam break event + cascading failures).
+
+
+POST-SUBMISSION
+================
+
+After submitting, keep the Space healthy for judges to test:
+
+  1. Monitor Space uptime
+     - Check https://huggingface.co/spaces/krishpotanwar/disaster-relief-env
+       regularly and ensure status stays "Running".
+     - If the Space goes to "Error" or "Sleeping", restart it from the
+       Space page (Settings -> Restart Space) before judges evaluate.
+     - HF Spaces on the free tier may sleep after inactivity — a single
+       curl $BASE/health will wake it back up.
+
+  2. Keep GROQ_API_KEY valid
+     - Do NOT rotate or delete the GROQ_API_KEY secret until after the
+       hackathon judging period ends.
+     - If you must rotate it, update the secret immediately:
+         Space -> Settings -> Repository secrets -> Edit GROQ_API_KEY
+     - A missing or expired key causes /baseline to return 503, which
+       will hurt the judging score.
+
+  3. Do NOT delete or make the Space private
+     - Judges test the live URL after submission; deleting or privatising
+       the Space will invalidate the submission.
+     - If you need to push a hotfix, push directly to the HF Space repo
+       and allow the Docker build to complete before judges arrive.
+
+
+================================================================
+WHAT JUDGES EVALUATE
+================================================================
+Judging rubric (from hackathon page):
+  30% — Real-world utility and alignment with disaster response use case
+  25% — Task quality and grader accuracy
+  20% — Environment design (novelty, mechanics, difficulty progression)
+  15% — Code quality and OpenEnv spec compliance
+  10% — Creativity
+
+Key differentiators in our submission:
+  - PyTorch model satisfies Meta's PyTorch requirement with real domain purpose
+  - False SOS mechanic is novel — no other env likely has this
+  - Dam break mid-episode tests adaptive replanning
+  - 4-stage pipeline with anti-hallucination is a production-quality baseline
+  - Grader covers 8 dimensions (rescue, supply, completion, critical, airlift,
+    overcommit, waste, false SOS)
+
+
+================================================================
+TROUBLESHOOTING
+================================================================
+
+Problem: /baseline returns 503
+Fix: GROQ_API_KEY not set in HF Secrets.
+     Space -> Settings -> Repository secrets -> Add GROQ_API_KEY
+
+Problem: HF Space shows "Error" status
+Fix: Click Logs tab. Most common: missing file in repo.
+     Re-check that all files from disasterman-v2/ were copied.
+
+Problem: Docker build fails on torch install
+Fix: The Dockerfile installs CPU torch from a special index URL.
+     Check that this line is present in Dockerfile:
+     RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+Problem: inference_v2.py hangs or times out
+Fix: Groq rate limits hit. STEP_DELAY=0.5 in inference_v2.py gives buffer.
+     For parallel runs (run_all_parallel), consider running tasks sequentially
+     if rate limits are hit: call run_task("task_1"), run_task("task_2"), etc.
+
+Problem: HF Space is sleeping / returns 503 after idle period
+Fix: Free-tier Spaces sleep after inactivity. Wake it with:
+     curl https://krishpotanwar-disaster-relief-env.hf.space/health
+     Wait ~30 seconds and retry.
+
+Problem: Submission portal not open yet
+Fix: Portal opens March 28, 2026. The Space is already deployed — just
+     wait for the portal to open, complete Phase 4 checklist, then submit.
+
+================================================================
