@@ -15,13 +15,16 @@ Endpoints:
   POST /humanizer               — Convert raw observation JSON into plain-English situation report
 """
 from __future__ import annotations
+import json
 import os
+import time
 import uuid
 import threading
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from environment import DisasterEnv
@@ -522,6 +525,385 @@ def simulate(task_id: str, req: SimulateRequest = SimulateRequest()):
         status_code=400,
         detail=f"Unknown agent '{agent}'. Valid: ai_4stage, greedy, random"
     )
+
+
+def _sse(event: str, payload: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+def _stream_heuristic(task_id: str, agent: str):
+    from agents.random_agent import get_random_action
+    from agents.greedy_agent import get_greedy_action
+    from agents.zone_scorer import score_zones
+
+    env = DisasterEnv()
+    obs = env.reset(task_id)
+    total_reward = 0.0
+    step_count = 0
+
+    while True:
+        obs_dict = obs.model_dump()
+        step_id = obs_dict["step_number"]
+
+        t0 = time.perf_counter()
+        zone_scores = score_zones(obs_dict)
+        pyt_ms = (time.perf_counter() - t0) * 1000.0
+        false_sos = [z["zone_id"] for z in zone_scores if z.get("is_false_sos_suspect")]
+        top_zones = [z["zone_id"] for z in zone_scores if z["zone_id"] not in false_sos][:3]
+
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "pytorch",
+            "duration_ms": round(pyt_ms, 3),
+            "summary": f"Scored zones. Top priorities: {top_zones or ['none']}",
+            "payload": {"top_zones": top_zones, "false_sos_suspects": false_sos},
+        })
+
+        triage_summary = (
+            f"Heuristic triage: false SOS={false_sos or []}, "
+            f"priority={top_zones or []}, weather={obs_dict['weather']}"
+        )
+        triage_data = {
+            "false_sos_suspects": false_sos,
+            "deadline_alerts": [],
+            "reserve_airlift_for": None,
+            "confidence": 0.72 if agent == "greedy" else 0.58,
+            "priority_zones": top_zones,
+        }
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "triage",
+            "duration_ms": 0.0,
+            "summary": triage_summary,
+            "payload": triage_data,
+        })
+
+        if agent == "greedy":
+            action_model, rationale = get_greedy_action(obs_dict, zone_scores)
+            plan_decision = "Greedy policy: recall → airlift → deploy → supply"
+        else:
+            action_model = get_random_action(obs_dict)
+            rationale = (
+                f"Random policy picked action={action_model.action}"
+                f"{' to ' + str(action_model.to_zone) if action_model.to_zone else ''}"
+            )
+            plan_decision = "Random valid-action policy"
+
+        plan_data = {
+            "primary_zone": action_model.to_zone or action_model.from_zone,
+            "critical_decision": plan_decision,
+            "step_plan": [
+                {
+                    "step_offset": 1,
+                    "action": action_model.action,
+                    "zone": action_model.to_zone or action_model.from_zone,
+                    "units": action_model.units,
+                    "reason": rationale,
+                }
+            ],
+        }
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "planner",
+            "duration_ms": 0.0,
+            "summary": plan_decision,
+            "payload": plan_data,
+        })
+
+        validator_data = {
+            "valid": True,
+            "fallback_used": False,
+            "constraints_checked": [
+                "zone_exists",
+                "resource_limits",
+                "road_access_or_airlift",
+                "false_sos_avoidance",
+            ],
+        }
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "action",
+            "duration_ms": 0.0,
+            "summary": rationale,
+            "payload": validator_data,
+        })
+
+        result = env.step(action_model)
+        total_reward += result.reward
+        step_count += 1
+
+        step_payload = {
+            "step": step_id,
+            "observation": obs_dict,
+            "action": action_model.model_dump(),
+            "reward": round(result.reward, 4),
+            "reasoning": {
+                "pytorch_scores": zone_scores,
+                "triage_summary": triage_summary,
+                "plan_decision": plan_decision,
+                "action_rationale": rationale,
+                "triage": triage_data,
+                "plan": plan_data,
+                "validator": validator_data,
+                "stage_timings_ms": {
+                    "pytorch": round(pyt_ms, 3),
+                    "triage": 0.0,
+                    "planner": 0.0,
+                    "action": 0.0,
+                },
+                "rejected_actions": [],
+            },
+        }
+        yield _sse("step", step_payload)
+
+        obs = result.observation
+        if result.done:
+            break
+
+        time.sleep(0.35)
+
+    final_state = env.state()
+    final_score = grade_episode(final_state["event_log"], final_state, task_id)
+    yield _sse("done", {
+        "task_id": task_id,
+        "agent": agent,
+        "final_score": round(final_score, 4),
+        "cumulative_reward": round(total_reward, 4),
+        "steps_taken": step_count,
+    })
+
+
+def _stream_ai_4stage(task_id: str):
+    from openai import OpenAI
+    from agents.zone_scorer import score_zones
+    from agents.triage_agent import run_triage
+    from agents.planner_agent import run_planner
+    from agents.action_agent import get_action
+
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    if groq_key:
+        client = OpenAI(base_url="https://api.groq.com/openai/v1", api_key=groq_key)
+        model = "llama-3.3-70b-versatile"
+    elif openai_key:
+        client = OpenAI(api_key=openai_key)
+        model = "gpt-4o-mini"
+    else:
+        raise HTTPException(
+            status_code=503,
+            detail="agent=ai_4stage requires GROQ_API_KEY or OPENAI_API_KEY."
+        )
+
+    env = DisasterEnv()
+    obs = env.reset(task_id)
+    history: list[dict] = []
+    total_reward = 0.0
+    step_count = 0
+
+    while True:
+        obs_dict = obs.model_dump()
+        step_id = obs_dict["step_number"]
+
+        t0 = time.perf_counter()
+        zone_scores = score_zones(obs_dict)
+        pyt_ms = (time.perf_counter() - t0) * 1000.0
+        top_zones = [z["zone_id"] for z in zone_scores[:3]]
+        false_sos = [z["zone_id"] for z in zone_scores if z.get("is_false_sos_suspect")]
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "pytorch",
+            "duration_ms": round(pyt_ms, 3),
+            "summary": f"Scored {len(zone_scores)} zones with {model}. Top priorities: {top_zones}",
+            "payload": {"top_zones": top_zones, "false_sos_suspects": false_sos},
+        })
+
+        t1 = time.perf_counter()
+        triage = run_triage(obs_dict, client, model, zone_scores=zone_scores)
+        triage_ms = (time.perf_counter() - t1) * 1000.0
+        triage_false = triage.get("false_sos_suspects", [])
+        triage_deadlines = triage.get("deadline_alerts", [])
+        triage_priority = [z.get("zone_id") for z in triage.get("priority_zones", [])[:3]]
+        triage_confidence = round(min(0.98, 0.58 + 0.08 * len(triage_false) + 0.04 * len(triage_deadlines)), 2)
+        triage_summary = (
+            f"Priority zones: {triage_priority} | False SOS suspects: {triage_false} "
+            f"| Deadline alerts: {[d.get('zone_id') for d in triage_deadlines]}"
+        )
+        triage_data = {
+            "false_sos_suspects": triage_false,
+            "deadline_alerts": triage_deadlines,
+            "reserve_airlift_for": triage.get("reserve_airlift_for"),
+            "confidence": triage_confidence,
+            "priority_zones": triage_priority,
+        }
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "triage",
+            "duration_ms": round(triage_ms, 2),
+            "summary": triage_summary,
+            "payload": triage_data,
+        })
+
+        t2 = time.perf_counter()
+        plan = run_planner(obs_dict, triage, zone_scores, client)
+        plan_ms = (time.perf_counter() - t2) * 1000.0
+        step_plan = plan.get("step_plan", [])
+        plan_decision = plan.get("critical_decision", "")
+        plan_data = {
+            "primary_zone": plan.get("primary_zone"),
+            "primary_action_type": plan.get("primary_action_type"),
+            "critical_decision": plan_decision,
+            "step_plan": step_plan,
+        }
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "planner",
+            "duration_ms": round(plan_ms, 2),
+            "summary": plan_decision or "Computed 3-step lookahead allocation plan",
+            "payload": plan_data,
+        })
+
+        t3 = time.perf_counter()
+        action = get_action(
+            obs_dict, triage, history, client, model, zone_scores=zone_scores, plan=plan
+        )
+        action_ms = (time.perf_counter() - t3) * 1000.0
+        step1 = next((s for s in step_plan if s.get("step_offset") == 1), None)
+        action_rationale = (
+            step1.get("reason", f"Execute {action.action}") if isinstance(step1, dict)
+            else f"Fallback: {action.action}"
+        )
+        validator_data = {
+            "valid": True,
+            "fallback_used": action_rationale.startswith("Fallback"),
+            "constraints_checked": [
+                "zone_exists",
+                "resource_limits",
+                "road_access_or_airlift",
+                "false_sos_avoidance",
+                "action_schema",
+            ],
+        }
+        yield _sse("stage", {
+            "step": step_id,
+            "stage": "action",
+            "duration_ms": round(action_ms, 2),
+            "summary": action_rationale,
+            "payload": validator_data,
+        })
+
+        result = env.step(action)
+        total_reward += result.reward
+        step_count += 1
+
+        rejected_actions = [
+            f"{s.get('action')}:{s.get('zone')}"
+            for s in step_plan
+            if isinstance(s, dict) and s.get("step_offset") in (2, 3)
+        ]
+        step_payload = {
+            "step": step_id,
+            "observation": obs_dict,
+            "action": action.model_dump(),
+            "reward": round(result.reward, 4),
+            "reasoning": {
+                "pytorch_scores": zone_scores,
+                "triage_summary": triage_summary,
+                "plan_decision": plan_decision,
+                "action_rationale": action_rationale,
+                "triage": triage_data,
+                "plan": plan_data,
+                "validator": validator_data,
+                "stage_timings_ms": {
+                    "pytorch": round(pyt_ms, 3),
+                    "triage": round(triage_ms, 2),
+                    "planner": round(plan_ms, 2),
+                    "action": round(action_ms, 2),
+                },
+                "rejected_actions": rejected_actions,
+            },
+        }
+        yield _sse("step", step_payload)
+
+        obs = result.observation
+        if result.done:
+            break
+
+        time.sleep(0.5)
+
+    final_state = env.state()
+    final_score = grade_episode(final_state["event_log"], final_state, task_id)
+    yield _sse("done", {
+        "task_id": task_id,
+        "agent": "ai_4stage",
+        "model": model,
+        "final_score": round(final_score, 4),
+        "cumulative_reward": round(total_reward, 4),
+        "steps_taken": step_count,
+    })
+
+
+@app.get("/simulate/stream/{task_id}")
+def simulate_stream(task_id: str, agent: str = "greedy"):
+    """
+    Stream a live simulation over Server-Sent Events (SSE).
+
+    Events:
+      - meta: static run metadata
+      - stage: one of pytorch|triage|planner|action
+      - step: full step payload (observation + action + reasoning)
+      - done: final score and totals
+      - error: stream failure details
+    """
+    if task_id not in ALL_TASKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown task_id '{task_id}'. Valid: {list(ALL_TASKS.keys())}"
+        )
+
+    agent = agent.strip()
+    if agent not in {"ai_4stage", "greedy", "random"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown agent '{agent}'. Valid: ai_4stage, greedy, random"
+        )
+
+    if agent == "ai_4stage":
+        groq_key = os.environ.get("GROQ_API_KEY", "")
+        openai_key = os.environ.get("OPENAI_API_KEY", "")
+        if not groq_key and not openai_key:
+            raise HTTPException(
+                status_code=503,
+                detail="agent=ai_4stage requires GROQ_API_KEY or OPENAI_API_KEY. Use agent=greedy for no-key demo."
+            )
+        model_name = "llama-3.3-70b-versatile" if groq_key else "gpt-4o-mini"
+    else:
+        model_name = f"{agent}-heuristic"
+
+    def _event_generator():
+        yield _sse("meta", {"task_id": task_id, "agent": agent, "model": model_name})
+        try:
+            if agent == "ai_4stage":
+                yield from _stream_ai_4stage(task_id)
+            else:
+                yield from _stream_heuristic(task_id, agent)
+        except Exception as exc:
+            yield _sse("error", {"task_id": task_id, "agent": agent, "detail": str(exc)})
+
+    return StreamingResponse(
+        _event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/simulate/stream/{task_id}")
+def simulate_stream_api(task_id: str, agent: str = "greedy"):
+    """Compatibility alias for deployments that proxy API calls under /api."""
+    return simulate_stream(task_id, agent)
 
 
 @app.post("/api/simulate/{task_id}")

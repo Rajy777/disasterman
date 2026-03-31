@@ -187,6 +187,7 @@ python inference_v2.py
 | GET | `/state/{session_id}` | Full state including hidden fields (for graders) |
 | POST | `/grader` | Score a completed episode (all 8 dimensions) |
 | POST | `/baseline` | Run baseline agent on all 3 tasks (requires API key) |
+| GET | `/simulate/stream/{task_id}?agent=...` | Live SSE stream of 4-stage agent thinking + step updates |
 
 ### Quick Test
 
@@ -233,8 +234,17 @@ Use one of these two supported modes to avoid `{"detail":"Not Found"}` routing m
    - Frontend will call backend directly.
 
 Backend supports both canonical and compatibility routes:
-- Canonical: `/health`, `/tasks`, `/reset`, `/step`, `/simulate/{task_id}`, `/compare/{task_id}`
-- Compatibility: `/api/health`, `/api/tasks`, `/api/reset`, `/api/step`, `/api/simulate/{task_id}`, `/api/compare/{task_id}`
+- Canonical: `/health`, `/tasks`, `/reset`, `/step`, `/simulate/{task_id}`, `/compare/{task_id}`, `/simulate/stream/{task_id}`
+- Compatibility: `/api/health`, `/api/tasks`, `/api/reset`, `/api/step`, `/api/simulate/{task_id}`, `/api/compare/{task_id}`, `/api/simulate/stream/{task_id}`
+
+---
+
+## Scaler Demo Upgrade (Interactive Recruiter View)
+
+- Leaflet Bengaluru map with 10 native city-side zone coordinates.
+- Live resource routing overlays (HQ to target zone) and action icons (`🚒`, `📦`, `🚁`).
+- 4-stage streaming thought process (`PyTorch → Triage → Planner → Action`) via SSE.
+- Recruiter-facing Explainability panel + quick Copilot Q&A prompts.
 
 ---
 

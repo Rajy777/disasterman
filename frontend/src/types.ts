@@ -38,11 +38,52 @@ export interface PyTorchScore {
   is_false_sos_suspect: boolean
 }
 
+export type StageName = 'pytorch' | 'triage' | 'planner' | 'action'
+
+export interface TriageAlert {
+  zone_id: string
+  steps_until_deadline?: number
+}
+
+export interface TriageDetails {
+  false_sos_suspects: string[]
+  deadline_alerts: TriageAlert[]
+  reserve_airlift_for?: string | null
+  confidence?: number
+  priority_zones?: string[]
+}
+
+export interface PlannerStep {
+  step_offset: number
+  action: string
+  zone?: string | null
+  units?: number | null
+  reason?: string
+}
+
+export interface PlannerDetails {
+  primary_zone?: string | null
+  primary_action_type?: string
+  critical_decision?: string
+  step_plan?: PlannerStep[]
+}
+
+export interface ValidatorDetails {
+  valid: boolean
+  fallback_used: boolean
+  constraints_checked: string[]
+}
+
 export interface Reasoning {
   pytorch_scores: PyTorchScore[]
   triage_summary: string
   plan_decision: string
   action_rationale: string
+  triage?: TriageDetails
+  plan?: PlannerDetails
+  validator?: ValidatorDetails
+  stage_timings_ms?: Partial<Record<StageName, number>>
+  rejected_actions?: string[]
 }
 
 export interface SimStep {
@@ -80,4 +121,27 @@ export interface TaskInfo {
   zones: number
   resources: Record<string, number>
   false_sos_zones: string[]
+}
+
+export interface StreamMetaEvent {
+  task_id: string
+  agent: string
+  model: string
+}
+
+export interface StreamStageEvent {
+  step: number
+  stage: StageName
+  duration_ms: number
+  summary: string
+  payload: unknown
+}
+
+export interface StreamDoneEvent {
+  task_id: string
+  agent: string
+  model?: string
+  final_score: number
+  cumulative_reward: number
+  steps_taken: number
 }

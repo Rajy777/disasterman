@@ -1,4 +1,12 @@
-import type { SimResult, CompareResult, TaskInfo } from '../types'
+import type {
+  SimResult,
+  CompareResult,
+  TaskInfo,
+  SimStep,
+  StreamDoneEvent,
+  StreamMetaEvent,
+  StreamStageEvent,
+} from '../types'
 
 const rawEnvBase = import.meta.env.VITE_API_URL?.trim()
 const normalizedEnvBase = rawEnvBase ? rawEnvBase.replace(/\/+$/, '') : ''
@@ -68,4 +76,70 @@ export async function simulate(
 
 export async function compare(taskId: string): Promise<CompareResult> {
   return request<CompareResult>(`/compare/${taskId}`, { method: 'POST' })
+}
+
+type StreamCallbacks = {
+  onMeta: (event: StreamMetaEvent) => void
+  onStage: (event: StreamStageEvent) => void
+  onStep: (step: SimStep) => void
+  onDone: (event: StreamDoneEvent) => void
+  onError: (message: string) => void
+}
+
+export function buildSseUrl(taskId: string, agent: 'greedy' | 'random' | 'ai_4stage'): string {
+  const streamPath = `/simulate/stream/${taskId}?agent=${encodeURIComponent(agent)}`
+  if (BASE.startsWith('http://') || BASE.startsWith('https://')) {
+    return `${BASE}${streamPath}`
+  }
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}${BASE}${streamPath}`
+  }
+  return `${BASE}${streamPath}`
+}
+
+export function streamSimulation(
+  taskId: string,
+  agent: 'greedy' | 'random' | 'ai_4stage',
+  callbacks: StreamCallbacks,
+): () => void {
+  const url = buildSseUrl(taskId, agent)
+  const source = new EventSource(url)
+
+  source.addEventListener('meta', (event) => {
+    const data = JSON.parse((event as MessageEvent).data) as StreamMetaEvent
+    callbacks.onMeta(data)
+  })
+
+  source.addEventListener('stage', (event) => {
+    const data = JSON.parse((event as MessageEvent).data) as StreamStageEvent
+    callbacks.onStage(data)
+  })
+
+  source.addEventListener('step', (event) => {
+    const data = JSON.parse((event as MessageEvent).data) as SimStep
+    callbacks.onStep(data)
+  })
+
+  source.addEventListener('done', (event) => {
+    const data = JSON.parse((event as MessageEvent).data) as StreamDoneEvent
+    callbacks.onDone(data)
+    source.close()
+  })
+
+  source.addEventListener('error', (event) => {
+    const payload = (event as MessageEvent).data
+    if (payload) {
+      try {
+        const parsed = JSON.parse(payload) as { detail?: string }
+        callbacks.onError(parsed.detail || payload)
+      } catch {
+        callbacks.onError(payload)
+      }
+    } else {
+      callbacks.onError(`SSE stream failed (${url})`)
+    }
+    source.close()
+  })
+
+  return () => source.close()
 }

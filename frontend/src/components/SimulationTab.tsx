@@ -1,4 +1,5 @@
-import { simulate } from '../api/client'
+import { useEffect, useRef } from 'react'
+import { simulate, streamSimulation } from '../api/client'
 import { useSimulation } from '../hooks/useSimulation'
 import { DisasterMap } from './DisasterMap'
 import { ResourceBar } from './ResourceBar'
@@ -6,6 +7,8 @@ import { EventFeed } from './EventFeed'
 import { AgentReasoningPanel } from './AgentReasoningPanel'
 import { ScorePanel } from './ScorePanel'
 import type { TaskInfo } from '../types'
+import { useLiveSimStore } from '../store/liveSimStore'
+import { CopilotQaPanel } from './CopilotQaPanel'
 
 interface Props {
   tasks: TaskInfo[]
@@ -31,18 +34,90 @@ export function SimulationTab({
   tasks, selectedTask, setSelectedTask, selectedAgent, setSelectedAgent,
 }: Props) {
   const sim = useSimulation()
+  const liveStatus = useLiveSimStore((s) => s.status)
+  const liveMeta = useLiveSimStore((s) => s.meta)
+  const liveSteps = useLiveSimStore((s) => s.steps)
+  const liveStageTimeline = useLiveSimStore((s) => s.stageTimeline)
+  const liveActiveStage = useLiveSimStore((s) => s.activeStage)
+  const liveCurrentStepIndex = useLiveSimStore((s) => s.currentStepIndex)
+  const liveDone = useLiveSimStore((s) => s.done)
+  const liveError = useLiveSimStore((s) => s.error)
+  const setLiveConnecting = useLiveSimStore((s) => s.setConnecting)
+  const setLiveMeta = useLiveSimStore((s) => s.setMeta)
+  const pushLiveStage = useLiveSimStore((s) => s.pushStage)
+  const pushLiveStep = useLiveSimStore((s) => s.pushStep)
+  const setLiveDone = useLiveSimStore((s) => s.setDone)
+  const setLiveError = useLiveSimStore((s) => s.setError)
+  const setLiveCurrentStepIndex = useLiveSimStore((s) => s.setCurrentStepIndex)
+  const resetLive = useLiveSimStore((s) => s.reset)
+  const streamCleanupRef = useRef<(() => void) | null>(null)
   const task = tasks.find(t => t.task_id === selectedTask)
 
   const run = () => {
-    sim.load(() => simulate(selectedTask, selectedAgent))
+    if (streamCleanupRef.current) {
+      streamCleanupRef.current()
+      streamCleanupRef.current = null
+    }
+    setLiveConnecting()
+
+    try {
+      streamCleanupRef.current = streamSimulation(selectedTask, selectedAgent, {
+        onMeta: (meta) => setLiveMeta(meta),
+        onStage: (event) => pushLiveStage(event),
+        onStep: (step) => pushLiveStep(step),
+        onDone: (done) => {
+          setLiveDone(done)
+          streamCleanupRef.current = null
+        },
+        onError: (message) => {
+          setLiveError(message)
+          streamCleanupRef.current = null
+        },
+      })
+    } catch {
+      resetLive()
+      sim.load(() => simulate(selectedTask, selectedAgent))
+    }
   }
 
-  // Initial observation (step 0 before anything plays)
-  const obs = sim.currentStep?.observation ?? null
-  const action = sim.currentStep?.action ?? null
-  const reasoning = sim.currentStep?.reasoning ?? null
+  const liveResult = (liveMeta && liveSteps.length > 0)
+    ? {
+        task_id: liveMeta.task_id,
+        agent: liveMeta.agent,
+        final_score: liveDone?.final_score ?? null,
+        cumulative_reward: liveDone?.cumulative_reward ?? 0,
+        steps_taken: liveDone?.steps_taken ?? liveSteps.length,
+        steps: liveSteps,
+      }
+    : null
+  const usingLive = liveStatus !== 'idle'
+  const liveCurrentStep = liveResult ? liveResult.steps[liveCurrentStepIndex] ?? null : null
+
+  const obs = (liveCurrentStep?.observation ?? sim.currentStep?.observation) ?? null
+  const action = (liveCurrentStep?.action ?? sim.currentStep?.action) ?? null
+  const reasoning = (liveCurrentStep?.reasoning ?? sim.currentStep?.reasoning) ?? null
+
+  const currentResult = (usingLive ? liveResult : sim.result)
+  const currentStepIndex = usingLive ? liveCurrentStepIndex : sim.currentStepIndex
+  const playbackLength = currentResult?.steps.length ?? 0
+  const isLoading = sim.isLoading || liveStatus === 'connecting'
+  const mergedError = liveError ?? sim.error
 
   const falseSOSZones = task?.false_sos_zones ?? []
+
+  useEffect(() => {
+    return () => {
+      if (streamCleanupRef.current) {
+        streamCleanupRef.current()
+        streamCleanupRef.current = null
+      }
+      resetLive()
+    }
+  }, [resetLive])
+
+  const currentStageEvents = reasoning
+    ? liveStageTimeline[liveCurrentStep?.step ?? -1] ?? []
+    : []
 
   return (
     <div className="space-y-6">
@@ -103,12 +178,12 @@ export function SimulationTab({
           <div className="flex gap-2">
             <button
               onClick={run}
-              disabled={sim.isLoading}
+              disabled={isLoading}
               className="px-4 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
             >
-              {sim.isLoading ? 'Running AI…' : '▶ Run'}
+              {isLoading ? 'Running AI…' : '▶ Run'}
             </button>
-            {sim.result && (
+            {sim.result && !usingLive && (
               <>
                 <button
                   onClick={sim.isPlaying ? sim.pause : sim.play}
@@ -121,6 +196,22 @@ export function SimulationTab({
                   className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm transition-colors"
                 >
                   ↺
+                </button>
+              </>
+            )}
+            {usingLive && playbackLength > 0 && (
+              <>
+                <button
+                  onClick={() => setLiveCurrentStepIndex(Math.max(0, currentStepIndex - 1))}
+                  className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm transition-colors"
+                >
+                  ←
+                </button>
+                <button
+                  onClick={() => setLiveCurrentStepIndex(Math.min(playbackLength - 1, currentStepIndex + 1))}
+                  className="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm transition-colors"
+                >
+                  →
                 </button>
               </>
             )}
@@ -141,14 +232,14 @@ export function SimulationTab({
       </div>
 
       {/* Error */}
-      {sim.error && (
+      {mergedError && (
         <div className="bg-red-950 border border-red-800 rounded-xl p-4 text-red-300 text-sm">
-          {sim.error}
+          {mergedError}
         </div>
       )}
 
       {/* Loading */}
-      {sim.isLoading && (
+      {isLoading && (
         <div className="flex flex-col items-center justify-center py-16 text-zinc-400">
           <div className="text-4xl mb-4 animate-spin">⚙</div>
           <p className="text-sm">Running {AGENT_LABELS[selectedAgent]}…</p>
@@ -161,14 +252,14 @@ export function SimulationTab({
       )}
 
       {/* Main content */}
-      {sim.result && obs && (
+      {currentResult && obs && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left: Map + resources */}
           <div className="lg:col-span-2 space-y-4">
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-xs uppercase tracking-widest text-zinc-500 font-medium">
-                  Disaster Map — Step {sim.currentStep?.step ?? 0} / {sim.result.steps_taken}
+                  Disaster Map — Step {(liveCurrentStep?.step ?? sim.currentStep?.step) ?? 0} / {currentResult.steps_taken}
                 </h3>
                 <span className={`text-xs px-2 py-0.5 rounded-full ${
                   obs.weather === 'clear' ? 'bg-green-900 text-green-400' :
@@ -183,41 +274,62 @@ export function SimulationTab({
                 action={action}
                 falseSOSZones={falseSOSZones}
                 pytorchScores={reasoning?.pytorch_scores}
+                compact={false}
               />
             </div>
             <ResourceBar
               resources={obs.resources}
-              initial={sim.result.steps[0]?.observation.resources}
+              initial={currentResult.steps[0]?.observation.resources}
             />
           </div>
 
           {/* Right: Score + reasoning + feed */}
           <div className="space-y-4">
-            <ScorePanel result={sim.result} currentStepIndex={sim.currentStepIndex} />
+            <ScorePanel result={currentResult} currentStepIndex={currentStepIndex} />
             {reasoning && (
-              <AgentReasoningPanel reasoning={reasoning} agent={AGENT_LABELS[sim.result.agent] ?? sim.result.agent} />
+              <AgentReasoningPanel
+                reasoning={reasoning}
+                agent={AGENT_LABELS[currentResult.agent] ?? currentResult.agent}
+                activeStage={liveActiveStage}
+                stageEvents={currentStageEvents}
+              />
+            )}
+            {obs && reasoning && (
+              <CopilotQaPanel
+                observation={obs}
+                reasoning={reasoning}
+                currentAction={action}
+                taskName={task?.name ?? selectedTask}
+              />
             )}
           </div>
         </div>
       )}
 
       {/* Event feed (full width below) */}
-      {sim.result && sim.result.steps.length > 0 && (
-        <EventFeed steps={sim.result.steps} currentStepIndex={sim.currentStepIndex} />
+      {currentResult && currentResult.steps.length > 0 && (
+        <EventFeed steps={currentResult.steps} currentStepIndex={currentStepIndex} />
       )}
 
       {/* Step scrubber */}
-      {sim.result && (
+      {currentResult && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
           <label className="text-xs text-zinc-500 uppercase tracking-wider block mb-2">
-            Step Scrubber — {sim.currentStepIndex + 1} / {sim.result.steps_taken}
+            Step Scrubber — {currentStepIndex + 1} / {currentResult.steps_taken}
           </label>
           <input
             type="range"
             min={0}
-            max={sim.result.steps.length - 1}
-            value={sim.currentStepIndex}
-            onChange={e => sim.seekTo(parseInt(e.target.value))}
+            max={Math.max(0, currentResult.steps.length - 1)}
+            value={Math.min(currentStepIndex, Math.max(0, currentResult.steps.length - 1))}
+            onChange={e => {
+              const value = parseInt(e.target.value)
+              if (usingLive) {
+                setLiveCurrentStepIndex(value)
+              } else {
+                sim.seekTo(value)
+              }
+            }}
             className="w-full accent-red-500"
           />
         </div>

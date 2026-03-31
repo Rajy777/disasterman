@@ -24,6 +24,7 @@ Use either of these modes:
 
 Backend compatibility routes are also available:
   /api/health, /api/tasks, /api/reset, /api/step, /api/simulate/{task_id}, /api/compare/{task_id}
+  /api/simulate/stream/{task_id}?agent=greedy|random|ai_4stage
 
 ================================================
 
@@ -159,6 +160,9 @@ Once the Space shows "Running", test these endpoints in your browser or curl:
 
   Task list (should return all 3 tasks):
     https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/tasks
+
+  SSE stream smoke test:
+    https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/simulate/stream/task_1?agent=greedy
 
   Interactive API docs (Swagger UI):
     https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/docs
