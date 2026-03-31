@@ -85,6 +85,10 @@ def run_planner(
     deadlines = triage.get("deadline_alerts", [])
     reserve_airlift = triage.get("reserve_airlift_for")
     weather_warn = triage.get("weather_warning", "")
+    deadline_labels = [
+        f"{d['zone_id']}({d.get('steps_until_deadline', '?')} steps)"
+        for d in deadlines
+    ]
 
     # Build prompt
     lines = [
@@ -96,7 +100,7 @@ def run_planner(
         *score_lines,
         "",
         "=== Triage Report ===",
-        f"Deadline alerts (CRITICAL): {[f\"{d['zone_id']}({d.get('steps_until_deadline','?')} steps)\" for d in deadlines]}",
+        f"Deadline alerts (CRITICAL): {deadline_labels}",
         f"Airlift reserved for: {reserve_airlift or 'none'}",
     ]
     if weather_warn:
