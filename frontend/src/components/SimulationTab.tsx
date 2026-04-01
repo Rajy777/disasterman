@@ -247,6 +247,13 @@ export function SimulationTab({
         )}
       </div>
 
+      {/* Fallback note (e.g. AI key missing → ran greedy instead) */}
+      {liveMeta?.note && (
+        <div className="bg-amber-950 border border-amber-800 rounded-xl p-4 text-amber-200 text-sm">
+          {liveMeta.note}
+        </div>
+      )}
+
       {/* Error */}
       {mergedError && (
         <div className="bg-red-950 border border-red-800 rounded-xl p-4 text-red-300 text-sm">

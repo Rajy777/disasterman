@@ -51,7 +51,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <a
-              href="https://github.com/Krishpotanwar/disasterman-scaler-demo"
+              href="https://github.com/Rajy777/disasterman"
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs text-zinc-500 hover:text-white transition-colors px-3 py-1.5 border border-zinc-800 rounded-lg"
@@ -98,22 +98,34 @@ export default function App() {
           </div>
         )}
 
-        {tab === 'simulate' && tasks.length > 0 && (
-          <SimulationTab
-            tasks={tasks}
-            selectedTask={selectedTask}
-            setSelectedTask={setSelectedTask}
-            selectedAgent={selectedAgent}
-            setSelectedAgent={setSelectedAgent}
-          />
+        {tab === 'simulate' && (
+          tasks.length > 0
+            ? <SimulationTab
+                tasks={tasks}
+                selectedTask={selectedTask}
+                setSelectedTask={setSelectedTask}
+                selectedAgent={selectedAgent}
+                setSelectedAgent={setSelectedAgent}
+              />
+            : !tasksError && (
+                <div className="flex items-center justify-center py-16 text-zinc-500 text-sm">
+                  <span className="animate-spin mr-3 text-lg">⚙</span> Connecting to backend…
+                </div>
+              )
         )}
 
         {tab === 'demo' && (
           <LiveDemoTab />
         )}
 
-        {tab === 'compare' && tasks.length > 0 && (
-          <CompareTab tasks={tasks} />
+        {tab === 'compare' && (
+          tasks.length > 0
+            ? <CompareTab tasks={tasks} />
+            : !tasksError && (
+                <div className="flex items-center justify-center py-16 text-zinc-500 text-sm">
+                  <span className="animate-spin mr-3 text-lg">⚙</span> Connecting to backend…
+                </div>
+              )
         )}
 
         {tab === 'about' && (

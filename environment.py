@@ -213,23 +213,29 @@ class DisasterEnv:
         return "success"
 
     def _airlift(self, action: ActionModel) -> str:
-        if self._airlifts_remaining <= 0:
-            return "insufficient_resources"
         zone = self._get_zone(action.to_zone)
         if zone is None:
             return "invalid"
-        self._airlifts_remaining -= 1
+        if self._airlifts_remaining <= 0:
+            return "insufficient_resources"
+
         airlift_type = action.type or "rescue"
         if airlift_type == "rescue":
+            if self._teams_available <= 0:
+                return "insufficient_resources"
+            self._airlifts_remaining -= 1
             self._teams_available -= 1
             zone.teams_present += 1
         else:
-            # Supply airlift: deliver 30 units regardless of road
-            useful = min(30, zone.supply_gap)
+            if self._supply_stock <= 0:
+                return "insufficient_resources"
+            self._airlifts_remaining -= 1
+            delivered = min(30, self._supply_stock)
+            useful = min(delivered, zone.supply_gap)
             zone.supply_received += useful
-            zone.supply_wasted += (30 - useful)
-            self._supply_stock = max(0, self._supply_stock - 30)
-        self._log("airlift", {"to": action.to_zone, "type": airlift_type})
+            zone.supply_wasted += (delivered - useful)
+            self._supply_stock -= delivered
+        self._log("airlift", {"to": action.to_zone, "airlift_type": airlift_type})
         return "success"
 
     def _recall_team(self, action: ActionModel) -> str:

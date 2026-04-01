@@ -163,7 +163,7 @@ export function LeafletDemoMap({ scenario, mapState }: Props) {
     <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-950">
       <div className="absolute inset-x-0 top-0 z-[500] flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 bg-zinc-950/92 px-4 py-3 backdrop-blur">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">Live Cyclone Demo</div>
+          <div className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">Live {scenario.disaster_type} Demo</div>
           <div className="text-sm font-semibold text-white">{scenario.title}</div>
         </div>
         <div className="max-w-sm text-right text-xs text-zinc-300">

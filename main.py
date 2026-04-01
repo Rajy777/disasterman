@@ -583,27 +583,36 @@ def simulate(task_id: str, req: SimulateRequest = SimulateRequest()):
         groq_key = os.environ.get("GROQ_API_KEY", "")
         openai_key = os.environ.get("OPENAI_API_KEY", "")
         if not groq_key and not openai_key:
-            raise HTTPException(
-                status_code=503,
-                detail="agent=ai_4stage requires GROQ_API_KEY or OPENAI_API_KEY. Use agent=greedy for a fast no-key demo."
-            )
-        try:
-            from inference_v2 import run_task_detailed
-            return run_task_detailed(task_id)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            # No API key — silently fall back to greedy so the demo never hard-fails
+            agent = "greedy"
+            _ai_fallback_note = "GROQ_API_KEY not set — running Greedy Heuristic as fallback. Add the key to HF Space Secrets to enable 4-Stage AI."
+        else:
+            _ai_fallback_note = None
+            try:
+                from inference_v2 import run_task_detailed
+                return run_task_detailed(task_id)
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+    else:
+        _ai_fallback_note = None
 
     if agent == "greedy":
         try:
             from agents.greedy_agent import run_greedy_task
-            return run_greedy_task(task_id)
+            result = run_greedy_task(task_id)
+            if _ai_fallback_note:
+                result["note"] = _ai_fallback_note
+            return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
     if agent == "random":
         try:
             from agents.random_agent import run_random_task
-            return run_random_task(task_id)
+            result = run_random_task(task_id)
+            if _ai_fallback_note:
+                result["note"] = _ai_fallback_note
+            return result
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
@@ -953,20 +962,25 @@ def simulate_stream(task_id: str, agent: str = "greedy"):
             detail=f"Unknown agent '{agent}'. Valid: ai_4stage, greedy, random"
         )
 
+    _stream_fallback_note = None
     if agent == "ai_4stage":
         groq_key = os.environ.get("GROQ_API_KEY", "")
         openai_key = os.environ.get("OPENAI_API_KEY", "")
         if not groq_key and not openai_key:
-            raise HTTPException(
-                status_code=503,
-                detail="agent=ai_4stage requires GROQ_API_KEY or OPENAI_API_KEY. Use agent=greedy for no-key demo."
-            )
-        model_name = "llama-3.3-70b-versatile" if groq_key else "gpt-4o-mini"
+            # Fall back to greedy so the demo never hard-fails
+            agent = "greedy"
+            _stream_fallback_note = "GROQ_API_KEY not set — running Greedy Heuristic as fallback. Add the key to HF Space Secrets to enable 4-Stage AI."
+            model_name = "greedy-heuristic"
+        else:
+            model_name = "llama-3.3-70b-versatile" if groq_key else "gpt-4o-mini"
     else:
         model_name = f"{agent}-heuristic"
 
     def _event_generator():
-        yield _sse("meta", {"task_id": task_id, "agent": agent, "model": model_name})
+        meta_payload: dict = {"task_id": task_id, "agent": agent, "model": model_name}
+        if _stream_fallback_note:
+            meta_payload["note"] = _stream_fallback_note
+        yield _sse("meta", meta_payload)
         try:
             if agent == "ai_4stage":
                 yield from _stream_ai_4stage(task_id)

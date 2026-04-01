@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://krishpotanwar-disasterman-scaler-demo.hf.space/$1"
+      "destination": "https://krishpotanwar-disaster-relief-env.hf.space/$1"
     }
   ]
 }

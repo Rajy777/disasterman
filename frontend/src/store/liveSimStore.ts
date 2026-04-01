@@ -81,13 +81,16 @@ const api: LiveSimState = {
     update((draft) => {
       draft.status = 'running'
       draft.activeStage = event.stage
-      draft.stageTimeline[event.step] = [...(draft.stageTimeline[event.step] ?? []), event]
+      draft.stageTimeline = {
+        ...draft.stageTimeline,
+        [event.step]: [...(draft.stageTimeline[event.step] ?? []), event],
+      }
     })
   },
   pushStep: (step) => {
     update((draft) => {
       draft.status = 'running'
-      draft.steps.push(step)
+      draft.steps = [...draft.steps, step]
       draft.currentStepIndex = draft.steps.length - 1
       draft.activeStage = null
     })

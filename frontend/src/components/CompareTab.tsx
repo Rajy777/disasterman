@@ -58,7 +58,7 @@ function MiniSimPanel({ result, falseSOSZones, stepIndex }: MiniSimProps) {
 }
 
 export function CompareTab({ tasks }: Props) {
-  const [selectedTask, setSelectedTask] = useState('task_2')
+  const [selectedTask, setSelectedTask] = useState(() => tasks[1]?.task_id ?? tasks[0]?.task_id ?? 'task_2')
   const [result, setResult] = useState<CompareResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -75,7 +75,7 @@ export function CompareTab({ tasks }: Props) {
     try {
       const r = await compare(selectedTask)
       setResult(r)
-      // Auto-advance step index to max steps for final reveal
+      // Auto-advance step index to the end of the longest replay.
       const maxSteps = Math.max(
         r.agents.random?.steps.length ?? 0,
         r.agents.greedy?.steps.length ?? 0,
@@ -96,13 +96,19 @@ export function CompareTab({ tasks }: Props) {
     }
   }
 
-  const scoreData = result
-    ? [
-        { name: 'Random',   score: result.agents.random?.final_score ?? 0,   fill: '#ef4444' },
-        { name: 'Greedy',   score: result.agents.greedy?.final_score ?? 0,   fill: '#f97316' },
-        { name: '4-Stage AI', score: result.agents.ai_4stage?.final_score ?? 0, fill: '#22c55e' },
-      ]
+  const scoredAgents = result
+    ? ([
+        { key: 'random', label: AGENT_META.random.label, score: result.agents.random?.final_score, fill: AGENT_META.random.color },
+        { key: 'greedy', label: AGENT_META.greedy.label, score: result.agents.greedy?.final_score, fill: AGENT_META.greedy.color },
+        { key: 'ai_4stage', label: AGENT_META.ai_4stage.label, score: result.agents.ai_4stage?.final_score, fill: AGENT_META.ai_4stage.color },
+      ].filter((agent): agent is { key: string; label: string; score: number; fill: string } => typeof agent.score === 'number'))
     : []
+
+  const scoreData = scoredAgents.map(agent => ({
+    name: agent.label,
+    score: agent.score,
+    fill: agent.fill,
+  }))
 
   const maxSteps = result
     ? Math.max(
@@ -111,6 +117,14 @@ export function CompareTab({ tasks }: Props) {
         result.agents.ai_4stage?.steps.length ?? 0,
       )
     : 0
+
+  let comparisonSummary = 'Run a comparison to inspect how the agents behave on the same task.'
+  if (result && result.agents.ai_4stage?.final_score == null) {
+    comparisonSummary = result.agents.ai_4stage?.note ?? '4-Stage AI is unavailable in this environment, so only the heuristic baselines are being compared.'
+  } else if (scoredAgents.length > 0) {
+    const leader = scoredAgents.reduce((best, agent) => agent.score > best.score ? agent : best)
+    comparisonSummary = `${leader.label} leads this run at ${leader.score.toFixed(4)}.`
+  }
 
   return (
     <div className="space-y-6">
@@ -144,7 +158,7 @@ export function CompareTab({ tasks }: Props) {
       {loading && (
         <div className="flex flex-col items-center py-16 text-zinc-400">
           <div className="text-4xl mb-4 animate-spin">⚙</div>
-          <p className="text-sm">Running Random + Greedy + 4-Stage AI in parallel…</p>
+          <p className="text-sm">Running available agents in parallel…</p>
         </div>
       )}
 
@@ -169,7 +183,7 @@ export function CompareTab({ tasks }: Props) {
               </ResponsiveContainer>
             </div>
             <p className="text-xs text-zinc-600 text-center mt-2">
-              4-Stage AI wins — real PyTorch scoring + LLM reasoning vs. blind heuristics
+              {comparisonSummary}
             </p>
           </div>
 
@@ -210,19 +224,19 @@ export function CompareTab({ tasks }: Props) {
 
       {/* Explainer */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-        <h3 className="text-sm font-semibold text-white mb-3">Why 4-Stage AI Wins</h3>
+        <h3 className="text-sm font-semibold text-white mb-3">Agent Profiles</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-zinc-400">
           <div>
             <div className="text-red-400 font-medium mb-1">Random Agent</div>
-            <p>Picks any valid action randomly. Wastes airlifts, sends resources to false SOS zones, ignores critical deadlines. No planning or prioritisation.</p>
+            <p>Picks any valid action randomly. Useful as a floor, but it can waste scarce airlifts, miss deadlines, and react poorly to changing conditions.</p>
           </div>
           <div>
             <div className="text-orange-400 font-medium mb-1">Greedy Heuristic</div>
-            <p>Follows fixed rules: recall → airlift → deploy → supply. No lookahead, no false SOS detection, no weather adaptation. Better than random but rigid.</p>
+            <p>Follows fixed rules: recall → airlift → deploy → supply. It benefits from PyTorch zone ranking and false-SOS filtering, but it still has no lookahead and stays fairly rigid.</p>
           </div>
           <div>
             <div className="text-green-400 font-medium mb-1">4-Stage AI Pipeline</div>
-            <p>Stage 1: PyTorch MLP scores all zones. Stage 2: LLM detects false SOS signals. Stage 3: LLM plans 3 steps ahead. Stage 4: LLM picks action + hard constraint validator prevents hallucinations.</p>
+            <p>When enabled, it combines PyTorch scoring, LLM triage, a short-horizon planner, and a hard validator. That gives it the strongest decision loop, but it depends on an API key.</p>
           </div>
         </div>
       </div>

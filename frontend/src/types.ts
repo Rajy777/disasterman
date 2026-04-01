@@ -129,6 +129,7 @@ export interface StreamMetaEvent {
   task_id: string
   agent: string
   model: string
+  note?: string
 }
 
 export interface StreamStageEvent {
