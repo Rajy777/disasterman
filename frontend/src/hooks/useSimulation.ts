@@ -56,7 +56,8 @@ export function useSimulation() {
       setState({ result, currentStepIndex: 0, isPlaying: false, isLoading: false, error: null })
       startPlayback(result, 0)
     } catch (e) {
-      setState(s => ({ ...s, isLoading: false, error: String(e) }))
+      const message = e instanceof Error ? e.message : String(e)
+      setState(s => ({ ...s, isLoading: false, error: message }))
     }
   }, [startPlayback])
 

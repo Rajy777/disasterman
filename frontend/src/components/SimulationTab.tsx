@@ -59,24 +59,40 @@ export function SimulationTab({
       streamCleanupRef.current = null
     }
     setLiveConnecting()
+    let sawStep = false
+
+    const fallbackToReplay = () => {
+      if (streamCleanupRef.current) {
+        streamCleanupRef.current()
+        streamCleanupRef.current = null
+      }
+      resetLive()
+      void sim.load(() => simulate(selectedTask, selectedAgent))
+    }
 
     try {
       streamCleanupRef.current = streamSimulation(selectedTask, selectedAgent, {
         onMeta: (meta) => setLiveMeta(meta),
         onStage: (event) => pushLiveStage(event),
-        onStep: (step) => pushLiveStep(step),
+        onStep: (step) => {
+          sawStep = true
+          pushLiveStep(step)
+        },
         onDone: (done) => {
           setLiveDone(done)
           streamCleanupRef.current = null
         },
         onError: (message) => {
-          setLiveError(message)
           streamCleanupRef.current = null
+          if (!sawStep) {
+            fallbackToReplay()
+            return
+          }
+          setLiveError(message)
         },
       })
     } catch {
-      resetLive()
-      sim.load(() => simulate(selectedTask, selectedAgent))
+      fallbackToReplay()
     }
   }
 

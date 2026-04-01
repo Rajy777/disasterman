@@ -148,3 +148,22 @@ This log was created on request to track extra features added in this session.
   - Isolated Vercel app: https://disasterman-scaler-demo.vercel.app — pending redeploy from this milestone.
 - Known issues/open follow-ups:
   - Vite still reports the existing large bundle-size warning, but the frontend build succeeds.
+
+### 2026-04-01 05:51:53 IST — Milestone 8: Benchmark SSE fallback and clearer no-key handling
+- Backend changes: none.
+- Frontend changes:
+  - Updated `frontend/src/components/SimulationTab.tsx` so benchmark runs fall back to the standard `/simulate/{task_id}` replay API if the SSE stream fails before any step data arrives.
+  - This turns a generic `SSE stream failed (...)` message into the backend-authored validation detail for no-key `ai_4stage` runs, while still preserving live-mode behavior when a stream has already delivered replay data.
+  - Updated `frontend/src/hooks/useSimulation.ts` to surface `Error.message` directly so API failures render as cleaner user-facing messages instead of `String(error)` output.
+- Deploy changes:
+  - Prepared a frontend-only patch release for the isolated Vercel app after a production report from the benchmark `Simulate` tab.
+- Verification performed:
+  - Live endpoint check: `GET /api/simulate/stream/task_3?agent=ai_4stage` returns `503` with the expected no-key detail from the isolated backend.
+  - Live endpoint check: `POST /api/simulate/task_3` returns the same `503` detail, confirming the fallback path can surface the real cause.
+  - `npm run build` → passed
+- Current live URLs/status:
+  - Isolated GitHub repo: https://github.com/Krishpotanwar/disasterman-scaler-demo — pending patch push from this milestone.
+  - Isolated Hugging Face Space: https://krishpotanwar-disasterman-scaler-demo.hf.space — backend unchanged by this milestone.
+  - Isolated Vercel app: https://disasterman-scaler-demo.vercel.app — pending redeploy from this milestone.
+- Known issues/open follow-ups:
+  - The isolated benchmark backend still does not have `GROQ_API_KEY` or `OPENAI_API_KEY`, so `ai_4stage` benchmark runs correctly remain unavailable there; this milestone only improves the reviewer-facing error/fallback behavior.
