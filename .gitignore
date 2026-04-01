@@ -24,3 +24,7 @@ env/
 # Claude internal
 .claude-flow/
 .claude/
+
+# Session logs / internal notes
+copilottaskdone.md
+extra\ feature\ added.md
