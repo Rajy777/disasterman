@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+# dist/  <-- Commented out so you can deploy the built React UI to HF Spaces
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# Secrets — never commit
+.env
+.env.local
+*.env
+
+# IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Claude internal
+.claude-flow/
+.claude/
+
+# Session logs / internal notes
+copilottaskdone.md
+extra\ feature\ added.md

@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://krishpotanwar-disaster-relief-env.hf.space/$1"
+    }
+  ]
+}

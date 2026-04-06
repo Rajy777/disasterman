@@ -1,0 +1,247 @@
+================================================================
+DISASTERMAN v3 — HUGGING FACE SPACES DEPLOYMENT GUIDE
+================================================================
+Estimated time: 15–20 minutes
+Prerequisite: git, Python 3.11+, a Groq API key (free at console.groq.com)
+================================================================
+
+FRONTEND CONNECTION COMPATIBILITY NOTE (VERCEL)
+================================================
+If your Vercel frontend shows:
+  API error 404: {"detail":"Not Found"}
+
+Use either of these modes:
+
+1) Proxy mode (recommended)
+   - Keep `VITE_API_URL` unset in Vercel.
+   - Add `frontend/vercel.json` rewrite:
+       /api/(.*)  ->  https://krishpotanwar-disaster-relief-env.hf.space/$1
+   - Frontend calls backend through same-origin `/api/*`.
+
+2) Direct mode
+   - Set `VITE_API_URL=https://krishpotanwar-disaster-relief-env.hf.space`
+   - Frontend calls HF backend directly.
+
+Backend compatibility routes are also available:
+  /api/health, /api/tasks, /api/reset, /api/step, /api/simulate/{task_id}, /api/compare/{task_id}
+  /api/simulate/stream/{task_id}?agent=greedy|random|ai_4stage
+
+================================================
+
+
+STEP 1 — CREATE A HUGGING FACE ACCOUNT
+---------------------------------------
+1. Go to https://huggingface.co/join
+2. Sign up with your email.
+3. Verify your email address.
+4. Go to https://huggingface.co/settings/tokens
+5. Click "New token" → Name it "disasterman" → Role: Write → Create.
+6. COPY the token now — you won't see it again.
+   Example: hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+
+STEP 2 — CREATE A NEW SPACE
+-----------------------------
+1. Go to https://huggingface.co/spaces
+2. Click "Create new Space" (top right).
+3. Fill in:
+     - Owner:      your HF username
+     - Space name: disaster-relief-env   (or any name you prefer)
+     - License:    MIT
+     - SDK:        Docker   <-- IMPORTANT: choose Docker, not Gradio/Streamlit
+     - Hardware:   CPU Basic (free tier, sufficient for our app)
+     - Visibility: Public   (required for hackathon judges)
+4. Click "Create Space".
+5. HF will show you an empty repo page. Leave this tab open.
+
+
+STEP 3 — CLONE THE SPACE REPO LOCALLY
+---------------------------------------
+Open your terminal and run:
+
+    git clone https://huggingface.co/spaces/<YOUR_HF_USERNAME>/disaster-relief-env
+    cd disaster-relief-env
+
+Replace <YOUR_HF_USERNAME> with your actual HF username.
+Example: git clone https://huggingface.co/spaces/krish/disaster-relief-env
+
+
+STEP 4 — COPY PROJECT FILES INTO THE REPO
+-------------------------------------------
+Copy ALL files from disasterman-v2/ into the cloned repo:
+
+On macOS/Linux:
+    cp -r /path/to/disasterman-v2/* .
+    cp -r /path/to/disasterman-v2/.* .   2>/dev/null || true
+
+On Windows (PowerShell):
+    Copy-Item -Path "C:\path\to\disasterman-v2\*" -Destination "." -Recurse
+
+After copying, your folder structure should look like:
+    disaster-relief-env/
+    ├── Dockerfile
+    ├── main.py
+    ├── environment.py
+    ├── models.py
+    ├── reward.py
+    ├── graders.py
+    ├── tasks.py
+    ├── inference_v2.py
+    ├── test_env.py
+    ├── requirements.txt
+    ├── openenv.yaml
+    ├── agents/
+    │   ├── __init__.py
+    │   ├── zone_scorer.py
+    │   ├── zone_scorer_weights.pt
+    │   ├── train_zone_scorer.py
+    │   ├── triage_agent.py
+    │   ├── planner_agent.py
+    │   └── action_agent.py
+    └── DEPLOY_TO_HF.txt
+
+
+STEP 5 — ADD GROQ API KEY AS A SECRET
+---------------------------------------
+IMPORTANT: NEVER commit API keys to git. Use HF Secrets instead.
+
+1. Go to your Space page on HF:
+   https://huggingface.co/spaces/<YOUR_HF_USERNAME>/disaster-relief-env
+2. Click "Settings" tab (top of the Space page).
+3. Scroll down to "Repository secrets".
+4. Click "New secret".
+5. Name:  GROQ_API_KEY
+   Value: (paste your Groq key from console.groq.com)
+6. Click "Add secret".
+
+The GROQ_API_KEY will be injected as an environment variable at runtime.
+The /baseline endpoint will only work once this secret is set.
+
+
+STEP 6 — COMMIT AND PUSH
+--------------------------
+    git add .
+    git commit -m "feat: DisasterMan v3 — 4-stage multi-agent pipeline"
+    git push
+
+When prompted for credentials:
+    Username: your HF username
+    Password: your HF token from Step 1 (hf_xxxx...)
+
+Tip: To avoid repeated credential prompts, run once:
+    git remote set-url origin https://<YOUR_HF_USERNAME>:<YOUR_HF_TOKEN>@huggingface.co/spaces/<YOUR_HF_USERNAME>/disaster-relief-env
+
+
+STEP 7 — WAIT FOR BUILD
+-------------------------
+1. Go to your Space page on HF.
+2. Click the "Logs" tab to watch the Docker build in real time.
+3. The build does the following automatically:
+   a. Installs CPU-only PyTorch (~400MB)
+   b. Installs all other dependencies (fastapi, pydantic, etc.)
+   c. Runs: python agents/train_zone_scorer.py
+      (trains the PyTorch ZoneScorerNet on 50K synthetic examples, ~8 seconds)
+   d. Starts the FastAPI server on port 7860
+
+Build time: 5–10 minutes on first push (PyTorch install takes a while).
+Subsequent pushes reuse Docker layer cache: ~2 minutes.
+
+4. When the build finishes, the status badge changes from "Building" to "Running".
+5. Your Space is live at:
+   https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space
+
+
+STEP 8 — VERIFY THE DEPLOYMENT
+--------------------------------
+Once the Space shows "Running", test these endpoints in your browser or curl:
+
+  Health check (should return {"status":"ok"}):
+    https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/health
+
+  Task list (should return all 3 tasks):
+    https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/tasks
+
+  SSE stream smoke test:
+    https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/simulate/stream/task_1?agent=greedy
+
+  Interactive API docs (Swagger UI):
+    https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/docs
+
+  Test a full episode via curl:
+    curl -X POST https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/reset \
+         -H "Content-Type: application/json" \
+         -d '{"task_id": "task_1"}'
+
+    # Copy the session_id from the response, then:
+    curl -X POST https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/step \
+         -H "Content-Type: application/json" \
+         -d '{"session_id": "<session_id>", "action": {"action": "deploy_team", "to_zone": "A", "units": 3}}'
+
+
+STEP 9 — RUN THE BASELINE AGENT (OPTIONAL)
+--------------------------------------------
+This runs the full 4-stage AI pipeline on all 3 tasks and returns grader scores.
+Requires GROQ_API_KEY to be set (Step 5). Takes ~2–4 minutes.
+
+    curl -X POST https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/baseline \
+         -H "Content-Type: application/json" \
+         -d '{"tasks": ["task_1", "task_2", "task_3"]}'
+
+Expected output:
+    {
+      "baseline_scores": {
+        "task_1": {"grader_score": 0.75–0.90, ...},
+        "task_2": {"grader_score": 0.45–0.65, ...},
+        "task_3": {"grader_score": 0.25–0.45, ...}
+      },
+      "pipeline": "PyTorch ZoneScorer → Triage → Planner → Action (4-stage)",
+      "model": "llama-3.3-70b-versatile (all tasks)"
+    }
+
+
+STEP 10 — SUBMIT TO THE HACKATHON
+------------------------------------
+Your submission URL for the hackathon is:
+    https://huggingface.co/spaces/<YOUR_HF_USERNAME>/disaster-relief-env
+
+Make sure the Space is set to PUBLIC (Settings → Visibility → Public).
+The judges will call /tasks, /reset, /step, /grader, and /baseline endpoints.
+
+
+================================================================
+TROUBLESHOOTING
+================================================================
+
+Problem: Build fails with "torch not found" or pip error
+Fix: Check the Logs tab. Ensure requirements.txt includes "torch>=2.2.0".
+     The Dockerfile installs torch separately from the CPU wheel index.
+
+Problem: /baseline returns 503 "GROQ_API_KEY not set"
+Fix: Go to Space Settings → Repository secrets → add GROQ_API_KEY.
+     Restart the Space after adding the secret (Settings → Factory reset).
+
+Problem: Space shows "Error" status
+Fix: Click Logs → look for the Python traceback.
+     Most common cause: missing file in the repo (check Step 4).
+
+Problem: git push asks for password repeatedly
+Fix: Store credentials:
+     git config credential.helper store
+     Then push once with your token as password.
+
+Problem: "Session not found" on /step
+Fix: Sessions expire after inactivity. Call /reset again to get a new session_id.
+
+Problem: /baseline times out (HF free tier has 60s timeout on HTTP)
+Fix: Use the async approach — start /baseline in background:
+     curl -X POST .../baseline -d '{"tasks":["task_1"]}' --max-time 300
+
+================================================================
+USEFUL LINKS
+================================================================
+HF Spaces docs:     https://huggingface.co/docs/hub/spaces
+Groq console:       https://console.groq.com
+Your Space:         https://huggingface.co/spaces/<YOUR_HF_USERNAME>/disaster-relief-env
+API docs (Swagger): https://<YOUR_HF_USERNAME>-disaster-relief-env.hf.space/docs
+Hackathon page:     https://www.scaler.com/school-of-technology/meta-pytorch-hackathon
+================================================================
