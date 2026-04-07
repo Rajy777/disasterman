@@ -2,9 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies + Node.js (for frontend build)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install CPU-only PyTorch first (avoids pulling the 2GB CUDA build)
@@ -16,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+
+# Build the React frontend so main.py can serve it as a SPA
+RUN cd frontend && npm ci && npm run build
 
 # Pre-train ZoneScorerNet on synthetic data and bake weights into the image.
 # This means inference is instant at runtime — no training cost per request.
