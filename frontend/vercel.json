@@ -3,6 +3,10 @@
     {
       "source": "/api/(.*)",
       "destination": "https://krishpotanwar-disaster-relief-env.hf.space/$1"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }
