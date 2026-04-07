@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Build the React frontend so main.py can serve it as a SPA
-RUN cd frontend && npm ci && npm run build
+RUN cd frontend && npm install && npm run build
 
 # Pre-train ZoneScorerNet on synthetic data and bake weights into the image.
 # This means inference is instant at runtime — no training cost per request.
