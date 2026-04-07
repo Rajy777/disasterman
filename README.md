@@ -15,9 +15,9 @@ short_description: Multi-zone disaster relief AI env for OpenEnv
 
 Every year, delayed disaster response costs lives. DRC-Env puts an AI agent in the role of an emergency coordinator managing real triage decisions: deploy rescue teams, route supplies, and call airlifts across multiple disaster zones — all under time pressure, resource scarcity, and deliberately injected false SOS signals designed to drain resources from zones that actually need them.
 
-Live demo (backend): **https://huggingface.co/spaces/krishpotanwar/disaster-relief-env**
+Live demo: **https://huggingface.co/spaces/krishpotanwar/disaster-relief-env**
 
-Frontend dashboard: **https://disasterman-scaler-demo.vercel.app**
+Mirror (Vercel CDN): **https://disasterman-scaler-demo.vercel.app**
 
 ---
 
@@ -175,7 +175,7 @@ python main.py
 
 # Run the 4-stage baseline agent on all tasks
 export GROQ_API_KEY=your_key_here
-python inference_v2.py
+python inference.py
 ```
 
 ### API Endpoints
@@ -209,31 +209,34 @@ curl -X POST http://localhost:7860/step \
 
 ## Docker / HF Spaces
 
+The Docker image builds both the Python backend and the React frontend in a single container. At build time it:
+1. Installs Node.js 20 and runs `npm install && npm run build` inside `frontend/`
+2. Trains `ZoneScorerNet` and bakes the weights into the image
+3. Starts FastAPI on port 7860 — serves the React SPA at `/` and the API at `/health`, `/tasks`, `/reset`, `/step`, etc.
+
 ```bash
-# Build (ZoneScorerNet trains automatically at build time)
+# Build
 docker build -t drc-env .
 
 # Run
 docker run -p 7860:7860 -e GROQ_API_KEY=your_key drc-env
+# Full UI + API at http://localhost:7860
 ```
 
 See `DEPLOY_TO_HF.txt` for the full Hugging Face Spaces deployment guide.
 
 ---
 
-## Frontend (Vercel) API Connection Modes
+## Frontend Deployment
 
-Use one of these two supported modes to avoid `{"detail":"Not Found"}` routing mismatches:
+The React dashboard is served in two ways:
 
-1. **Proxy mode (recommended on Vercel)**
-   - Keep `VITE_API_URL` unset in Vercel.
-   - Frontend will use same-origin `/api`.
-   - `frontend/vercel.json` rewrites `/api/*` to:
-     - `https://krishpotanwar-disaster-relief-env.hf.space/*`
+| URL | How | Notes |
+|-----|-----|-------|
+| `https://krishpotanwar-disaster-relief-env.hf.space` | FastAPI serves `frontend/dist/` directly | Primary — self-contained, use for hackathon submission |
+| `https://disasterman-scaler-demo.vercel.app` | Vercel CDN, proxies `/api/*` to HF | Mirror — faster static asset delivery |
 
-2. **Direct mode**
-   - Set `VITE_API_URL=https://krishpotanwar-disaster-relief-env.hf.space`
-   - Frontend will call backend directly.
+The Vercel mirror uses proxy mode: `frontend/vercel.json` rewrites `/api/*` → `https://krishpotanwar-disaster-relief-env.hf.space/*`. No `VITE_API_URL` env var needed.
 
 Backend supports both canonical and compatibility routes:
 - Canonical: `/health`, `/tasks`, `/reset`, `/step`, `/simulate/{task_id}`, `/compare/{task_id}`, `/simulate/stream/{task_id}`
@@ -241,12 +244,27 @@ Backend supports both canonical and compatibility routes:
 
 ---
 
-## Scaler Demo Upgrade (Interactive Recruiter View)
+## Interactive Dashboard
 
-- Leaflet Bengaluru map with 10 native city-side zone coordinates.
-- Live resource routing overlays (HQ to target zone) and action icons (`🚒`, `📦`, `🚁`).
-- 4-stage streaming thought process (`PyTorch → Triage → Planner → Action`) via SSE.
-- Recruiter-facing Explainability panel + quick Copilot Q&A prompts.
+The HF Space serves a full React dashboard at the root URL alongside the API. Six tabs:
+
+| Tab | What it shows |
+|-----|--------------|
+| **Strategy Generator** | Groq-powered AI strategy generation — enter a scenario, get a full response plan |
+| **Command Center** | Operational command & control view with probability matrix and comms intercept terminal |
+| **Simulate** | Step-by-step episode runner with per-zone card grid (casualties, supply, PyTorch score, action icons) |
+| **Live Demo** | Leaflet Bengaluru map — 3 scenarios (cyclone, flood, building collapse) with SSE-streamed 4-stage agent reasoning |
+| **Compare** | Side-by-side Random vs Greedy vs 4-Stage AI agent score comparison across tasks |
+| **System Logs** | Live backend observability — endpoint activity, session log, agent pipeline traces |
+
+**Landing page** with project overview loads before the tab interface.
+
+Key features across all tabs:
+- 4-stage streaming thought process (`PyTorch → Triage → Planner → Action`) via SSE
+- Leaflet Bengaluru map with 10 native city-side zone coordinates and resource routing overlays
+- Probability matrix for zone priority visualization
+- Comms Intercept Terminal showing raw SOS signal analysis
+- Recruiter-facing Explainability panel + Copilot Q&A prompts
 
 ---
 
@@ -265,27 +283,38 @@ Scores are reproducible at `temperature=0`.
 ## Project Structure
 
 ```
-disasterman-v2/
-├── main.py                    # FastAPI server (OpenEnv API)
+disasterman/
+├── main.py                    # FastAPI server — OpenEnv API + React SPA serving
 ├── environment.py             # DisasterEnv — world state + step logic
 ├── models.py                  # Pydantic models (ActionModel, ObservationModel)
 ├── reward.py                  # Reward function components
 ├── graders.py                 # Episode grader — returns [0.0, 1.0] across 8 dimensions
 ├── tasks.py                   # Task configurations (task_1, task_2, task_3)
-├── inference_v2.py            # 4-stage agent pipeline runner
-├── test_env.py                # Environment unit tests
+├── inference.py               # 4-stage agent pipeline runner
+├── test_env.py                # Environment unit tests (98 tests)
+├── demo_runner.py             # Bengaluru live demo scenario runner
+├── demo_scenarios.py          # Demo scenario definitions (cyclone, flood, collapse)
+├── demo_models.py             # Demo data models
 ├── requirements.txt
-├── Dockerfile
+├── Dockerfile                 # Builds frontend + trains ZoneScorerNet at image build time
 ├── openenv.yaml               # OpenEnv spec
-├── README.md
-├── DEPLOY_TO_HF.txt           # HF Spaces deployment guide
-└── agents/
-    ├── zone_scorer.py         # PyTorch ZoneScorerNet (Stage 1)
-    ├── zone_scorer_weights.pt # Pre-trained weights (ships in Docker image)
-    ├── train_zone_scorer.py   # Training script (runs at Docker build time)
-    ├── triage_agent.py        # Triage Agent (Stage 2)
-    ├── planner_agent.py       # Planner Agent (Stage 3)
-    └── action_agent.py        # Action Agent + validator (Stage 4)
+├── agents/
+│   ├── zone_scorer.py         # PyTorch ZoneScorerNet (Stage 1)
+│   ├── zone_scorer_weights.pt # Pre-trained weights (baked into Docker image)
+│   ├── train_zone_scorer.py   # Training script (~8s on CPU)
+│   ├── triage_agent.py        # Triage Agent — false SOS detection (Stage 2)
+│   ├── planner_agent.py       # Planner Agent — 3-step lookahead (Stage 3)
+│   └── action_agent.py        # Action Agent + hard validator + fallback (Stage 4)
+└── frontend/                  # React 18 + TypeScript + Vite + Tailwind dashboard
+    └── src/
+        └── components/
+            ├── LandingPage.tsx
+            ├── CommandCenterTab.tsx
+            ├── StrategyGeneratorTab.tsx
+            ├── SimulationTab.tsx
+            ├── LiveDemoTab.tsx
+            ├── CompareTab.tsx
+            └── SystemLogsTab.tsx
 ```
 
 ---
