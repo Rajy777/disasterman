@@ -68,7 +68,7 @@ export default function App() {
               GitHub ↗
             </a>
             <a
-              href="https://krishpotanwar-disasterman-scaler-demo.hf.space/docs"
+              href="https://krishpotanwar-disaster-relief-env.hf.space/docs"
               target="_blank"
               rel="noopener noreferrer"
               className="text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white transition-all px-4 py-1.5 rounded-lg shadow-[0_0_15px_rgba(79,70,229,0.4)] hover:shadow-[0_0_25px_rgba(79,70,229,0.7)]"
