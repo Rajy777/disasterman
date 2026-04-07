@@ -130,9 +130,12 @@ class AnalyzeRequest(BaseModel):
 @app.get("/")
 def root():
     """
-    Root endpoint for deployment health visibility.
-    HF Spaces often probes '/' from the UI; returning metadata avoids 'Not Found' confusion.
+    Serves the React SPA index.html when frontend/dist is built,
+    otherwise returns JSON metadata for API health visibility.
     """
+    _index = os.path.join(os.path.dirname(__file__), "frontend", "dist", "index.html")
+    if os.path.exists(_index):
+        return FileResponse(_index)
     return {
         "name": "Disaster Relief Coordination Env (DRC-Env)",
         "status": "ok",
