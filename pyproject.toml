@@ -16,7 +16,11 @@ dependencies = [
     "openai>=1.30.0",
     "python-multipart>=0.0.9",
     "torch>=2.2.0",
+    "openenv-core>=0.2.0",
 ]
+
+[project.scripts]
+server = "main:serve"
 
 [project.urls]
 Homepage = "https://huggingface.co/spaces/krishpotanwar/disaster-relief-env"
