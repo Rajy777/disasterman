@@ -27,7 +27,7 @@ os.environ.setdefault("GROQ_API_KEY", "")
 os.environ.setdefault("HF_TOKEN", "")
 
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -201,11 +201,14 @@ def list_tasks_api():
 
 
 @app.post("/reset", response_model=ResetResponse)
-def reset(req: ResetRequest):
+def reset(req: Optional[ResetRequest] = Body(default=None)):
     """
     Initialize a new episode. Returns session_id + first observation.
     Pass session_id to all subsequent /step and /state calls.
+    Body is optional — defaults to task_id="task_1" when omitted.
     """
+    if req is None:
+        req = ResetRequest()
     if req.task_id not in ALL_TASKS:
         raise HTTPException(
             status_code=400,
@@ -217,7 +220,7 @@ def reset(req: ResetRequest):
 
 
 @app.post("/api/reset", response_model=ResetResponse)
-def reset_api(req: ResetRequest):
+def reset_api(req: Optional[ResetRequest] = Body(default=None)):
     """Compatibility alias for deployments that proxy API calls under /api."""
     return reset(req)
 
