@@ -157,7 +157,9 @@ episode_score  = (tanh(cumulative_reward / max_steps * 2) + 1) / 2
 ### Prerequisites
 
 - Python 3.11+
-- `GROQ_API_KEY` (free at [console.groq.com](https://console.groq.com)) **or** `OPENAI_API_KEY`
+- `HF_TOKEN` — your Groq API key (free at [console.groq.com](https://console.groq.com)) set as this env var
+- `API_BASE_URL` — defaults to `https://api.groq.com/openai/v1`
+- `MODEL_NAME` — defaults to `llama-3.3-70b-versatile`
 
 ### Local Development
 
@@ -174,7 +176,9 @@ python main.py
 # Server runs at http://localhost:7860
 
 # Run the 4-stage baseline agent on all tasks
-export GROQ_API_KEY=your_key_here
+export HF_TOKEN=your_groq_key_here   # required
+export API_BASE_URL=https://api.groq.com/openai/v1   # optional, this is the default
+export MODEL_NAME=llama-3.3-70b-versatile             # optional, this is the default
 python inference.py
 ```
 
@@ -219,7 +223,7 @@ The Docker image builds both the Python backend and the React frontend in a sing
 docker build -t drc-env .
 
 # Run
-docker run -p 7860:7860 -e GROQ_API_KEY=your_key drc-env
+docker run -p 7860:7860 -e HF_TOKEN=your_groq_key drc-env
 # Full UI + API at http://localhost:7860
 ```
 

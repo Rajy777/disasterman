@@ -82,7 +82,7 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
     step = 0
 
     if verbose:
-        print(f"START {task_id}")
+        print(f"[START] task_id={task_id} model={MODEL}")
 
     while True:
         obs_dict = obs.model_dump()
@@ -110,12 +110,12 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
         if verbose:
             top_zone = zone_scores[0]["zone_id"] if zone_scores else "?"
             print(
-                f"STEP {step:02d} | "
+                f"[STEP] step={step:02d} "
                 f"action={action.action} "
                 f"to_zone={getattr(action, 'to_zone', '-')} "
-                f"units={getattr(action, 'units', '-')} | "
+                f"units={getattr(action, 'units', '-')} "
                 f"reward={result.reward:+.3f} "
-                f"cumulative={total_reward:+.3f} | "
+                f"cumulative={total_reward:+.3f} "
                 f"top_zone={top_zone}"
             )
 
@@ -132,10 +132,10 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
 
     if verbose:
         print(
-            f"END {task_id} | "
-            f"score={score:.4f} | "
-            f"steps={step} | "
-            f"cumulative={total_reward:.4f} | "
+            f"[END] task_id={task_id} "
+            f"score={score:.4f} "
+            f"steps={step} "
+            f"cumulative={total_reward:.4f} "
             f"status={status}"
         )
 
