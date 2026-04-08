@@ -268,7 +268,7 @@ Key features across all tabs:
 - Leaflet Bengaluru map with 10 native city-side zone coordinates and resource routing overlays
 - Probability matrix for zone priority visualization
 - Comms Intercept Terminal showing raw SOS signal analysis
-- Recruiter-facing Explainability panel + Copilot Q&A prompts
+- Recruiter-facing explainability panel + Copilot Q&A prompts
 
 ---
 
