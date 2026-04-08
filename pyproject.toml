@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-server = "main:main"
+server = "server.app:main"
 
 [project.urls]
 Homepage = "https://huggingface.co/spaces/krishpotanwar/disaster-relief-env"
