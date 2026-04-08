@@ -1,13 +1,27 @@
 """
 graders.py — Episode graders for all 3 tasks.
 Owner: Krish Potanwar
-All graders are pure functions: (event_log, final_state) → float [0.0, 1.0]
+All graders are pure functions: (event_log, final_state) → float in strict (0, 1).
 Deterministic — same input always produces same score.
+
+Scaler Phase 2 validator requires scores strictly between 0 and 1 (not 0.0, not 1.0),
+so we clamp to (SCORE_MIN, SCORE_MAX) below.
 """
 
 from __future__ import annotations
 import math
 from reward import compute_episode_score
+
+# Scaler Phase 2 requires scores strictly in (0, 1). Never hit the endpoints.
+SCORE_MIN = 1e-3   # 0.001
+SCORE_MAX = 1.0 - 1e-3   # 0.999
+
+
+def _strict_clamp(score: float) -> float:
+    """Clamp to strictly (0, 1). Handles NaN/inf by falling back to 0.5."""
+    if not math.isfinite(score):
+        return 0.5
+    return round(max(SCORE_MIN, min(SCORE_MAX, score)), 4)
 
 
 def _base_scores(final_state: dict) -> dict:
@@ -52,10 +66,10 @@ def grade_task_1(event_log: list[dict], final_state: dict) -> float:
     """
     s = _base_scores(final_state)
     raw = 0.6 * s["rescue_score"] + 0.4 * s["supply_score"]
-    # Bonus: perfect rescue gets a small boost
+    # Bonus: perfect rescue gets a small boost (but stays strictly below 1.0)
     if s["rescue_score"] >= 1.0:
-        raw = min(1.0, raw + 0.05)
-    return round(max(0.0, min(1.0, raw)), 4)
+        raw += 0.05
+    return _strict_clamp(raw)
 
 
 def grade_task_2(event_log: list[dict], final_state: dict) -> float:
@@ -76,7 +90,7 @@ def grade_task_2(event_log: list[dict], final_state: dict) -> float:
         0.30 * max(0.0, critical_response) +
         0.20 * s["efficiency_score"]
     )
-    return round(max(0.0, min(1.0, raw)), 4)
+    return _strict_clamp(raw)
 
 
 def grade_task_3(event_log: list[dict], final_state: dict) -> float:
@@ -132,7 +146,7 @@ def grade_task_3(event_log: list[dict], final_state: dict) -> float:
         0.10 * s["efficiency_score"]
         - false_sos_penalty
     )
-    return round(max(0.0, min(1.0, raw)), 4)
+    return _strict_clamp(raw)
 
 
 def grade_episode(event_log: list[dict], final_state: dict, task_id: str) -> float:
