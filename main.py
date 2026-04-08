@@ -1180,7 +1180,7 @@ else:
 # HF Spaces entry point
 # ---------------------------------------------------------------------------
 
-def serve():
+def main():
     """Entry point for [project.scripts] server — used by openenv validate."""
     import uvicorn
     port = int(os.environ.get("PORT", 7860))
@@ -1188,4 +1188,4 @@ def serve():
 
 
 if __name__ == "__main__":
-    serve()
+    main()
