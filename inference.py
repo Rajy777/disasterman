@@ -33,31 +33,26 @@ from agents.triage_agent import run_triage
 from agents.planner_agent import run_planner
 from agents.action_agent import get_action
 
-# API key resolution: prefer GROQ (free, fast Llama 3.3 70B).
-# Falls back to OPENAI_API_KEY for OpenAI GPT models if Groq key not set.
-# The OpenAI Python client is used in both cases (OpenEnv spec requirement).
-GROQ_KEY   = os.environ.get("GROQ_API_KEY", "")
-OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+# Standardized OpenEnv inference vars (required by submission checklist)
+API_BASE_URL     = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL_NAME       = os.getenv("MODEL_NAME",   "llama-3.3-70b-versatile")
+HF_TOKEN         = os.getenv("HF_TOKEN")      # no default — must be set in HF Secrets
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")  # optional: for from_docker_image()
+
 
 def _build_client() -> tuple[OpenAI, str]:
     """
-    Return (client, model_name) using the best available API key.
-    Groq is preferred: free tier supports llama-3.3-70b-versatile with high rate limits.
-    Falls back to OpenAI GPT-4o-mini if only OPENAI_API_KEY is set.
+    Return (client, model_name) using standardized OpenEnv env vars.
+    Primary: HF_TOKEN. Fallback: GROQ_API_KEY, then OPENAI_API_KEY.
     """
-    if GROQ_KEY:
-        return (
-            OpenAI(base_url="https://api.groq.com/openai/v1", api_key=GROQ_KEY),
-            "llama-3.3-70b-versatile",
+    api_key = HF_TOKEN or os.getenv("GROQ_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise EnvironmentError(
+            "No API key found. Set HF_TOKEN (or GROQ_API_KEY) in HF Space Secrets."
         )
-    if OPENAI_KEY:
-        return (
-            OpenAI(api_key=OPENAI_KEY),
-            "gpt-4o-mini",
-        )
-    raise EnvironmentError(
-        "No API key found. Set GROQ_API_KEY (recommended, free) "
-        "or OPENAI_API_KEY in your environment."
+    return (
+        OpenAI(base_url=API_BASE_URL, api_key=api_key),
+        MODEL_NAME,
     )
 
 # Step delay (seconds) — rate-limit buffer (3 LLM calls per step)
@@ -87,9 +82,7 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
     step = 0
 
     if verbose:
-        print(f"\n{'='*65}")
-        print(f"[{task_id.upper()}] Starting | 4-stage pipeline | Model: {MODEL}")
-        print(f"{'='*65}")
+        print(f"START {task_id}")
 
     while True:
         obs_dict = obs.model_dump()
@@ -101,7 +94,7 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
         triage = run_triage(obs_dict, client, MODEL, zone_scores=zone_scores)
 
         # Stage 3 — Strategic planner (LLM, 3-step lookahead)
-        plan = run_planner(obs_dict, triage, zone_scores, client)
+        plan = run_planner(obs_dict, triage, zone_scores, client, MODEL)
 
         # Stage 4 — Action execution (LLM + constraint validator)
         action = get_action(
@@ -115,22 +108,15 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
         step += 1
 
         if verbose:
-            false_sos = triage.get("false_sos_suspects", [])
-            deadlines = triage.get("deadline_alerts", [])
-            top_score = zone_scores[0]["zone_id"] if zone_scores else "?"
-
-            suffix = ""
-            if deadlines:
-                suffix += f" [DL:{[d['zone_id'] for d in deadlines]}]"
-            if false_sos:
-                suffix += f" [FSOS:{false_sos}]"
-
+            top_zone = zone_scores[0]["zone_id"] if zone_scores else "?"
             print(
-                f"[{task_id}] S{step:02d} | {action.action:15s} "
-                f"to={str(action.to_zone):4s} u={str(action.units):4s} "
-                f"res={result.observation.last_action_result:20s} | "
-                f"r={result.reward:+.3f} cum={total_reward:+.3f} | top={top_score}"
-                + suffix
+                f"STEP {step:02d} | "
+                f"action={action.action} "
+                f"to_zone={getattr(action, 'to_zone', '-')} "
+                f"units={getattr(action, 'units', '-')} | "
+                f"reward={result.reward:+.3f} "
+                f"cumulative={total_reward:+.3f} | "
+                f"top_zone={top_zone}"
             )
 
         obs = result.observation
@@ -145,8 +131,13 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
     status = "✓ IN TARGET" if lo <= score <= hi else ("▲ ABOVE" if score > hi else "✗ BELOW")
 
     if verbose:
-        print(f"\n[{task_id.upper()}] Score: {score:.4f} | Target: {lo:.2f}–{hi:.2f} | {status}")
-        print(f"[{task_id.upper()}] Reward: {total_reward:.4f} | Steps: {step}")
+        print(
+            f"END {task_id} | "
+            f"score={score:.4f} | "
+            f"steps={step} | "
+            f"cumulative={total_reward:.4f} | "
+            f"status={status}"
+        )
 
     return {
         "task_id": task_id,
@@ -240,7 +231,7 @@ def run_task_detailed(task_id: str) -> dict:
 
         zone_scores = score_zones(obs_dict)
         triage = run_triage(obs_dict, client, MODEL, zone_scores=zone_scores)
-        plan = run_planner(obs_dict, triage, zone_scores, client)
+        plan = run_planner(obs_dict, triage, zone_scores, client, MODEL)
         action = get_action(
             obs_dict, triage, history, client, MODEL,
             zone_scores=zone_scores,

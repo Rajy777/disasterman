@@ -52,6 +52,7 @@ def run_planner(
     triage: dict,
     zone_scores: list[dict],
     client: OpenAI,
+    model: str = "llama-3.3-70b-versatile",
 ) -> dict:
     """
     Run strategic 3-step planner using Llama 3.3 70B.
@@ -126,7 +127,7 @@ def run_planner(
 
     try:
         resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=model,
             messages=[
                 {"role": "system", "content": PLANNER_SYSTEM},
                 {"role": "user", "content": "\n".join(lines)},
