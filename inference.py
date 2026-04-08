@@ -151,14 +151,9 @@ def run_task(task_id: str, verbose: bool = True) -> dict:
 def run_all_parallel() -> dict:
     """
     Run all 3 tasks in parallel via ThreadPoolExecutor(max_workers=3).
-    Each task has its own independent env + agent chain + Groq client.
+    Each task has its own independent env + agent chain + OpenAI-compatible client.
     """
-    if not GROQ_KEY and not OPENAI_KEY:
-        raise EnvironmentError(
-            "No API key found. Set GROQ_API_KEY (recommended, free at https://console.groq.com) "
-            "or OPENAI_API_KEY in your environment."
-        )
-
+    # _build_client() raises EnvironmentError if no API key is set
     _, model_name = _build_client()
 
     print("\n" + "=" * 65)
@@ -288,5 +283,12 @@ def run_task_detailed(task_id: str) -> dict:
 
 
 if __name__ == "__main__":
-    results = run_all_parallel()
-    print_summary(results)
+    import sys
+    import traceback
+    try:
+        results = run_all_parallel()
+        print_summary(results)
+    except Exception as exc:
+        print(f"[FATAL] inference.py crashed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
